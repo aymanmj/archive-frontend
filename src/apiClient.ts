@@ -1,51 +1,48 @@
-import axios from 'axios';
-import { useAuthStore } from './stores/authStore';
+// src/apiClient.ts
+import axios from "axios";
+import { useAuthStore } from "./stores/authStore";
 
-// 1. إنشاء نسخة من axios مع إعدادات أساسية
+// لو عندك VITE_API_BASE_URL استعمله، وإلا استخدم localhost:3000
+const baseURL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+
 const apiClient = axios.create({
-  baseURL: 'http://localhost:3000', // عنوان الخادم الخلفي
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  baseURL,
+  withCredentials: false,
 });
 
-// 2. استخدام "معترض الطلبات" (Request Interceptor)
-// هذا الكود سيعمل قبل إرسال أي طلب
-apiClient.interceptors.request.use(
-  (config) => {
-    // قراءة التوكن مباشرة من مخزن Zustand
-    const token = useAuthStore.getState().token;
-    if (token) {
-      // إذا وجد التوكن، أضفه إلى الهيدر
-      config.headers.Authorization = `Bearer ${token}`;
+// ميدلوير قبل الإرسال
+apiClient.interceptors.request.use((config) => {
+  // أضف التوكن إن وجد
+  try {
+    // ⚠️ الواجهة لا يمكنها استدعاء Zustand مباشرة من هنا،
+    // لذا سنقرأ التوكن من localStorage (على افتراض authStore يخزن هناك أيضاً)
+    const raw = localStorage.getItem("auth");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const token = parsed?.state?.token || parsed?.token;
+      if (token) {
+        config.headers = config.headers || {};
+        (config.headers as any).Authorization = `Bearer ${token}`;
+      }
     }
-    return config;
-  },
-  (error) => {
-    // في حالة حدوث خطأ أثناء إعداد الطلب
-    return Promise.reject(error);
-  },
-);
+  } catch {
+    // تجاهل
+  }
 
-// 3. (اختياري لكن موصى به بشدة) استخدام "معترض الاستجابات" (Response Interceptor)
-// هذا الكود سيعمل بعد استلام أي استجابة من الخادم
-apiClient.interceptors.response.use(
-  (response) => {
-    // أي استجابة ناجحة (رمز الحالة 2xx) ستمر من هنا
-    return response;
-  },
-  (error) => {
-    // أي استجابة فاشلة (رمز الحالة ليس 2xx) ستمر من هنا
-    if (error.response && error.response.status === 401) {
-      // خطأ 401 يعني أن التوكن غير صالح أو منتهي الصلاحية
-      console.log('API Client: Unauthorized access (401). Logging out.');
-      // نقوم بتسجيل الخروج تلقائياً
-      useAuthStore.getState().logout();
-      // إعادة تحميل الصفحة لتوجيه المستخدم إلى صفحة الدخول
-      window.location.reload();
+  // لو البيانات FormData، لا تضع Content-Type إطلاقاً
+  if (typeof FormData !== "undefined" && config.data instanceof FormData) {
+    if (config.headers && "Content-Type" in config.headers) {
+      delete (config.headers as any)["Content-Type"];
     }
-    return Promise.reject(error);
-  },
-);
+  } else {
+    // غير ذلك خليه JSON افتراضياً
+    config.headers = config.headers || {};
+    if (!(config.headers as any)["Content-Type"]) {
+      (config.headers as any)["Content-Type"] = "application/json";
+    }
+  }
+
+  return config;
+});
 
 export default apiClient;
