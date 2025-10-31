@@ -228,6 +228,10 @@ function IncomingPage() {
     );
 
     await refreshList();
+
+    // تحديث تفاؤلي احتياطي:
+    setItems((old) => old.map(r => r.documentId === selectedDocId ? {...r, hasFiles: true} : r));
+    
     if (showFilesForDocId === selectedDocId) await loadDocFiles(selectedDocId);
     // إغلاق تلقائي
     setTimeout(() => { setShowUploadModal(false); setSelectedFiles([]); setProgressMap({}); }, 900);
