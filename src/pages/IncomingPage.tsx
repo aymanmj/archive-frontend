@@ -218,6 +218,15 @@ function IncomingPage() {
 
     setUploading(false);
     setUploadInfo("تم رفع الملفات وربطها بالمعاملة ✅");
+
+
+    // ✅ تحديث تفاؤلي للصف المحدد — يحوِّل زر "إرفاق" إلى "مرفق" فورًا
+    setItems((prev) =>
+      prev.map((it) =>
+        it.documentId === selectedDocId ? { ...it, hasFiles: true } : it
+      )
+    );
+
     await refreshList();
     if (showFilesForDocId === selectedDocId) await loadDocFiles(selectedDocId);
     // إغلاق تلقائي
