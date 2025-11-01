@@ -12,6 +12,7 @@ function LoginPage() {
 
   const navigate = useNavigate();
   const location = useLocation();
+  const from = (location.state as any)?.from?.pathname || '/dashboard';
 
   // من المخزن: login (يوحّد حفظ التوكن + بيانات المستخدم + localStorage)
   const login = useAuthStore((s) => s.login);
