@@ -1,8 +1,7 @@
 // src/components/ProtectedRoute.tsx
-
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
-import AppLayout from './layout/AppLayout';
+import React from 'react';
 
 type ProtectedRouteProps = {
   roles?: string[];
@@ -15,7 +14,7 @@ export default function ProtectedRoute({ roles, fallback }: ProtectedRouteProps)
   const isInitializing  = useAuthStore((s) => s.isInitializing);
   const user            = useAuthStore((s) => s.user);
 
-  // أثناء تهيئة الجلسة: لا نقرر شيئًا (يمنع الوميض)
+  // أثناء تهيئة الجلسة: لا نقرر شيئًا (يمنع الوميض والتوجيه المبكر)
   if (isInitializing) {
     return (
       fallback ?? (
@@ -26,28 +25,17 @@ export default function ProtectedRoute({ roles, fallback }: ProtectedRouteProps)
     );
   }
 
-  // غير مصدّق → إلى صفحة الدخول، مع حفظ الوجهة
   if (!isAuthenticated) {
     return <Navigate to="/" replace state={{ from: location }} />;
   }
 
-  // التحقق من الأدوار إن طُلب
   if (roles?.length) {
-    const userRoles: string[] | undefined =
-      (user as any)?.roles ?? (user as any)?.UserRole?.map((ur: any) => ur?.Role?.roleName) ?? undefined;
-
-    const allowed = userRoles?.some((r) => roles.includes(r));
-    if (!allowed) return <Navigate to="/dashboard" replace />;
+    const ok = user?.roles?.some((r) => roles.includes(r));
+    if (!ok) return <Navigate to="/dashboard" replace />;
   }
 
-  // ✅ تغليف الصفحات المحمية بالـ Layout (Topbar + Sidebar)
-  return (
-    <AppLayout>
-      <Outlet />
-    </AppLayout>
-  );
+  return <Outlet />;
 }
-
 
 
 
@@ -56,6 +44,7 @@ export default function ProtectedRoute({ roles, fallback }: ProtectedRouteProps)
 
 // import { Navigate, Outlet, useLocation } from 'react-router-dom';
 // import { useAuthStore } from '../stores/authStore';
+// import AppLayout from './layout/AppLayout';
 
 // type ProtectedRouteProps = {
 //   roles?: string[];
@@ -68,7 +57,7 @@ export default function ProtectedRoute({ roles, fallback }: ProtectedRouteProps)
 //   const isInitializing  = useAuthStore((s) => s.isInitializing);
 //   const user            = useAuthStore((s) => s.user);
 
-//   // أثناء تهيئة الجلسة: لا نقرر شيئًا (يمنع الوميض والتوجيه المبكر)
+//   // أثناء تهيئة الجلسة: لا نقرر شيئًا (يمنع الوميض)
 //   if (isInitializing) {
 //     return (
 //       fallback ?? (
@@ -79,14 +68,26 @@ export default function ProtectedRoute({ roles, fallback }: ProtectedRouteProps)
 //     );
 //   }
 
+//   // غير مصدّق → إلى صفحة الدخول، مع حفظ الوجهة
 //   if (!isAuthenticated) {
 //     return <Navigate to="/" replace state={{ from: location }} />;
 //   }
 
+//   // التحقق من الأدوار إن طُلب
 //   if (roles?.length) {
-//     const ok = user?.roles?.some((r) => roles.includes(r));
-//     if (!ok) return <Navigate to="/dashboard" replace />;
+//     const userRoles: string[] | undefined =
+//       (user as any)?.roles ?? (user as any)?.UserRole?.map((ur: any) => ur?.Role?.roleName) ?? undefined;
+
+//     const allowed = userRoles?.some((r) => roles.includes(r));
+//     if (!allowed) return <Navigate to="/dashboard" replace />;
 //   }
 
-//   return <Outlet />;
+//   // ✅ تغليف الصفحات المحمية بالـ Layout (Topbar + Sidebar)
+//   return (
+//     <AppLayout>
+//       <Outlet />
+//     </AppLayout>
+//   );
 // }
+
+

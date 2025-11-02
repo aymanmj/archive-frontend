@@ -1,14 +1,12 @@
-// src/main.tsx
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import './index.css';
 
-// مكونات التهيئة والحماية
 import AppInitializer from './components/AppInitializer';
 import ProtectedRoute from './components/ProtectedRoute';
+import AppLayout from './components/AppLayout';
 
-// الصفحات
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import DepartmentsPage from './pages/DepartmentsPage';
@@ -17,49 +15,48 @@ import IncomingDetailsPage from './pages/IncomingDetailsPage';
 import OutgoingPage from './pages/OutgoingPage';
 import OutgoingDetailsPage from './pages/OutgoingDetailsPage';
 
-// ✅ تفعيل RTL عربي عالميًا مرة واحدة
-if (typeof document !== 'undefined') {
-  document.documentElement.setAttribute('dir', 'rtl');
-  document.documentElement.setAttribute('lang', 'ar');
-  document.body.classList.add('rtl'); // يستفيد من قواعد CSS في index.css
-}
+document.documentElement.dir = 'rtl';
+document.documentElement.lang = 'ar';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <BrowserRouter /* basename={import.meta.env.BASE_URL || '/'} */>
+    <BrowserRouter>
       <AppInitializer>
         <Routes>
-          {/* مسار عام: تسجيل الدخول */}
           <Route path="/" element={<LoginPage />} />
 
-          {/* مسارات محمية */}
+          {/* كل المسارات المحمية داخل Layout واحد */}
           <Route element={<ProtectedRoute />}>
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/departments" element={<DepartmentsPage />} />
-            <Route path="/incoming" element={<IncomingPage />} />
-            <Route path="/incoming/:id" element={<IncomingDetailsPage />} />
-            <Route path="/outgoing" element={<OutgoingPage />} />
-            <Route path="/outgoing/:id" element={<OutgoingDetailsPage />} />
+            <Route element={<AppLayout />}>
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/departments" element={<DepartmentsPage />} />
+              <Route path="/incoming" element={<IncomingPage />} />
+              <Route path="/incoming/:id" element={<IncomingDetailsPage />} />
+              <Route path="/outgoing" element={<OutgoingPage />} />
+              <Route path="/outgoing/:id" element={<OutgoingDetailsPage />} />
+            </Route>
           </Route>
         </Routes>
       </AppInitializer>
     </BrowserRouter>
-  </React.StrictMode>,
+  </React.StrictMode>
 );
 
 
 
 
+
+// // src/main.tsx
 // import React from 'react';
 // import ReactDOM from 'react-dom/client';
 // import { BrowserRouter, Routes, Route } from 'react-router-dom';
 // import './index.css';
 
-// // استيراد المكونات الجديدة
+// // مكونات التهيئة والحماية
 // import AppInitializer from './components/AppInitializer';
 // import ProtectedRoute from './components/ProtectedRoute';
 
-// // استيراد الصفحات
+// // الصفحات
 // import LoginPage from './pages/LoginPage';
 // import DashboardPage from './pages/DashboardPage';
 // import DepartmentsPage from './pages/DepartmentsPage';
@@ -68,16 +65,22 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 // import OutgoingPage from './pages/OutgoingPage';
 // import OutgoingDetailsPage from './pages/OutgoingDetailsPage';
 
+// // ✅ تفعيل RTL عربي عالميًا مرة واحدة
+// if (typeof document !== 'undefined') {
+//   document.documentElement.setAttribute('dir', 'rtl');
+//   document.documentElement.setAttribute('lang', 'ar');
+//   document.body.classList.add('rtl'); // يستفيد من قواعد CSS في index.css
+// }
+
 // ReactDOM.createRoot(document.getElementById('root')!).render(
 //   <React.StrictMode>
-//     <BrowserRouter>
-//       {/* 1. نغلف التطبيق بـ AppInitializer */}
+//     <BrowserRouter /* basename={import.meta.env.BASE_URL || '/'} */>
 //       <AppInitializer>
 //         <Routes>
-//           {/* المسار العام: صفحة تسجيل الدخول */}
+//           {/* مسار عام: تسجيل الدخول */}
 //           <Route path="/" element={<LoginPage />} />
 
-//           {/* 2. نستخدم ProtectedRoute لتغليف جميع المسارات المحمية */}
+//           {/* مسارات محمية */}
 //           <Route element={<ProtectedRoute />}>
 //             <Route path="/dashboard" element={<DashboardPage />} />
 //             <Route path="/departments" element={<DepartmentsPage />} />
@@ -92,54 +95,3 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 //   </React.StrictMode>,
 // );
 
-
-
-
-// import React from "react";
-// import ReactDOM from "react-dom/client";
-// import { BrowserRouter, Routes, Route } from "react-router-dom";
-// import './index.css'
-
-
-// import "./index.css";
-// import LoginPage from "./pages/LoginPage";
-// import DashboardPage from "./pages/DashboardPage";
-// import DepartmentsPage from "./pages/DepartmentsPage";
-// import IncomingPage from "./pages/IncomingPage";
-// import IncomingDetailsPage from "./pages/IncomingDetailsPage";
-// import OutgoingPage from "./pages/OutgoingPage";
-// import OutgoingDetailsPage from "./pages/OutgoingDetailsPage";
-
-
-
-// ReactDOM.createRoot(document.getElementById("root")!).render(
-//   <React.StrictMode>
-//     <BrowserRouter>
-//       <Routes>
-//         <Route path="/" element={<LoginPage />} />
-//         <Route path="/dashboard" element={<DashboardPage />} />
-//         <Route path="/departments" element={<DepartmentsPage />} /> 
-//         <Route path="/incoming" element={<IncomingPage />} /> 
-//         <Route path="/incoming/:id" element={<IncomingDetailsPage />} />
-//         <Route path="/outgoing" element={<OutgoingPage />} /> 
-//         <Route path="/outgoing/:id" element={<OutgoingDetailsPage />} />       
-//       </Routes>
-//     </BrowserRouter>
-//   </React.StrictMode>
-// );
-
-
-
-
-
-
-// import { StrictMode } from 'react'
-// import { createRoot } from 'react-dom/client'
-// import './index.css'
-// import App from './App.tsx'
-
-// createRoot(document.getElementById('root')!).render(
-//   <StrictMode>
-//     <App />
-//   </StrictMode>,
-// )
