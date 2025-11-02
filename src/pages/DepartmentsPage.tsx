@@ -1,275 +1,107 @@
 import { useEffect, useState } from "react";
-import { getToken } from "../auth";
+import api from "../api/apiClient";
 
-type Department = {
-  id: number;
-  name: string;
-  status: string;
-  createdAt: string;
-  updatedAt: string;
-  _count?: {
-    users: number;
-  };
-};
+type Dept = { id: number; name: string; status: "Active" | "Inactive"; createdAt: string; updatedAt: string; _count?: { users: number } };
 
-function DepartmentsPage() {
-  const [departments, setDepartments] = useState<Department[]>([]);
+export default function DepartmentsPage() {
+  const [items, setItems] = useState<Dept[]>([]);
   const [name, setName] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
-  const [infoMsg, setInfoMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  async function loadDepartments() {
-    setLoading(true);
-    setErrorMsg("");
-    setInfoMsg("");
-
-    const token = getToken();
-    if (!token) {
-      window.location.href = "/";
-      return;
-    }
-
+  const load = async () => {
+    setError(null);
     try {
-      const res = await fetch("http://localhost:3000/departments", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!res.ok) {
-        setErrorMsg("تعذر تحميل الإدارات");
-        setLoading(false);
-        return;
-      }
-
-      const data = await res.json();
-      setDepartments(data);
-    } catch (err) {
-      setErrorMsg("خطأ في الاتصال بالخادم");
-    } finally {
-      setLoading(false);
+      const { data } = await api.get("/departments");
+      setItems(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      setError(e?.response?.data?.message ?? "فشل تحميل الإدارات");
     }
-  }
+  };
 
-  async function handleAdd(e: React.FormEvent) {
-    e.preventDefault();
-    setErrorMsg("");
-    setInfoMsg("");
-
-    const trimmed = name.trim();
-    if (!trimmed) {
-      setErrorMsg("يرجى إدخال اسم الإدارة");
-      return;
-    }
-
-    const token = getToken();
-    if (!token) {
-      window.location.href = "/";
-      return;
-    }
-
+  const add = async () => {
+    if (!name.trim()) return;
+    setBusy(true);
+    setError(null);
     try {
-      const res = await fetch("http://localhost:3000/departments", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ name: trimmed }),
-      });
-
-      if (!res.ok) {
-        setErrorMsg("تعذر إضافة الإدارة");
-        return;
-      }
-
+      await api.post("/departments", { name: name.trim() });
       setName("");
-      setInfoMsg("تمت إضافة الإدارة بنجاح ✅");
-      await loadDepartments();
-    } catch (err) {
-      setErrorMsg("خطأ في الاتصال بالخادم");
+      await load();
+    } catch (e: any) {
+      setError(e?.response?.data?.message ?? "فشل إضافة الإدارة");
+    } finally {
+      setBusy(false);
     }
-  }
+  };
 
-  async function toggleStatus(dep: Department) {
-    const token = getToken();
-    if (!token) {
-      window.location.href = "/";
-      return;
-    }
-
-    const newStatus = dep.status === "Active" ? "Inactive" : "Active";
-
+  const toggleStatus = async (id: number, status: "Active" | "Inactive") => {
+    setBusy(true);
+    setError(null);
     try {
-      const res = await fetch(
-        `http://localhost:3000/departments/${dep.id}/status`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ status: newStatus }),
-        }
-      );
-
-      if (!res.ok) {
-        setErrorMsg("تعذر تحديث حالة الإدارة");
-        return;
-      }
-
-      setInfoMsg("تم تحديث الحالة ✅");
-      await loadDepartments();
-    } catch (err) {
-      setErrorMsg("خطأ في الاتصال بالخادم");
+      const next = status === "Active" ? "Inactive" : "Active";
+      await api.patch(`/departments/${id}/status`, { status: next });
+      await load();
+    } catch (e: any) {
+      setError(e?.response?.data?.message ?? "فشل تعديل الحالة");
+    } finally {
+      setBusy(false);
     }
-  }
+  };
 
-  useEffect(() => {
-    loadDepartments();
-  }, []);
+  useEffect(() => { load(); }, []);
 
   return (
-    <div
-      dir="rtl"
-      className="min-h-screen bg-slate-100 text-slate-800 p-6"
-    >
-      <div className="max-w-4xl mx-auto space-y-6">
+    <div className="p-4 space-y-4" dir="rtl">
+      <h1 className="text-2xl font-bold text-slate-700">الإدارات</h1>
 
-        {/* العنوان + رجوع للداشبورد */}
-        <div className="flex items-start justify-between">
-          <div className="text-right">
-            <h1 className="text-2xl font-semibold text-slate-800">
-              إدارات المؤسسة
-            </h1>
-            <p className="text-sm text-slate-500">
-              إضافة وتفعيل/تعطيل الإدارات
-            </p>
-          </div>
+      <div className="bg-white shadow rounded-2xl p-4 flex gap-2">
+        <input
+          className="border rounded-lg px-3 py-2 flex-1"
+          placeholder="اسم الإدارة"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <button onClick={add} disabled={busy} className="bg-blue-600 text-white rounded-lg px-4 py-2 disabled:opacity-50">
+          إضافة
+        </button>
+      </div>
 
-          <a
-            href="/dashboard"
-            className="text-xs bg-slate-500 text-white px-3 py-1.5 rounded-lg hover:bg-slate-600"
-          >
-            ← الرجوع للوحة التحكم
-          </a>
-        </div>
+      {error && <div className="text-sm text-red-600">{error}</div>}
 
-        {/* رسائل التنبيه */}
-        {errorMsg && (
-          <div className="bg-red-100 text-red-700 text-sm p-3 rounded-lg text-right">
-            {errorMsg}
-          </div>
-        )}
-        {infoMsg && (
-          <div className="bg-green-100 text-green-700 text-sm p-3 rounded-lg text-right">
-            {infoMsg}
-          </div>
-        )}
-
-        {/* فورم إضافة إدارة */}
-        <form
-          onSubmit={handleAdd}
-          className="bg-white border border-slate-200 rounded-xl shadow p-4 text-right space-y-4"
-        >
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
-              اسم الإدارة الجديدة
-            </label>
-            <input
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="مثال: إدارة الشؤون القانونية"
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="bg-blue-600 text-white text-sm font-medium py-2 px-4 rounded-lg hover:bg-blue-700 transition"
-          >
-            إضافة الإدارة
-          </button>
-        </form>
-
-        {/* جدول الإدارات */}
-        <div className="bg-white border border-slate-200 rounded-xl shadow p-4 text-right">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-slate-700">
-              قائمة الإدارات
-            </h2>
-            {loading && (
-              <span className="text-xs text-slate-500">...جاري التحديث</span>
+      <div className="bg-white shadow rounded-2xl overflow-hidden">
+        <table className="w-full text-right">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="p-3">#</th>
+              <th className="p-3">الاسم</th>
+              <th className="p-3">الحالة</th>
+              <th className="p-3">المستخدمون</th>
+              <th className="p-3">إجراء</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((d) => (
+              <tr key={d.id} className="border-t">
+                <td className="p-3">{d.id}</td>
+                <td className="p-3">{d.name}</td>
+                <td className="p-3">{d.status}</td>
+                <td className="p-3">{d._count?.users ?? "—"}</td>
+                <td className="p-3">
+                  <button onClick={() => toggleStatus(d.id, d.status)} className="px-3 py-1 rounded bg-slate-700 text-white">
+                    تبديل الحالة
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {!items.length && (
+              <tr>
+                <td className="p-3 text-slate-500" colSpan={5}>لا توجد إدارات</td>
+              </tr>
             )}
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-slate-600 border-b border-slate-200">
-                <tr className="text-right">
-                  <th className="py-2 px-3">المعرف</th>
-                  <th className="py-2 px-3">الاسم</th>
-                  <th className="py-2 px-3">الحالة</th>
-                  <th className="py-2 px-3">عدد الموظفين</th>
-                  <th className="py-2 px-3">تاريخ الإنشاء</th>
-                  <th className="py-2 px-3">إجراءات</th>
-                </tr>
-              </thead>
-              <tbody>
-                {departments.map((dep) => (
-                  <tr
-                    key={dep.id}
-                    className="border-b border-slate-100 last:border-none"
-                  >
-                    <td className="py-2 px-3">{dep.id}</td>
-                    <td className="py-2 px-3">{dep.name}</td>
-                    <td className="py-2 px-3">
-                      {dep.status === "Active" ? (
-                        <span className="inline-flex items-center gap-1 text-green-700 bg-green-100 text-xs font-medium px-2 py-0.5 rounded">
-                          نشط <span>✅</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-slate-700 bg-slate-200 text-xs font-medium px-2 py-0.5 rounded">
-                          موقوف <span>⏸</span>
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2 px-3 text-center">
-                      {dep._count?.users ?? 0}
-                    </td>
-                    <td className="py-2 px-3">
-                      {new Date(dep.createdAt).toLocaleDateString()}
-                    </td>
-                    <td className="py-2 px-3">
-                      <button
-                        onClick={() => toggleStatus(dep)}
-                        className="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-lg hover:bg-slate-900"
-                      >
-                        {dep.status === "Active" ? "تعطيل" : "تفعيل"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-
-                {departments.length === 0 && !loading && (
-                  <tr>
-                    <td
-                      colSpan={6}
-                      className="text-center text-slate-500 py-6"
-                    >
-                      لا توجد إدارات بعد
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-        </div>
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
 
-export default DepartmentsPage;

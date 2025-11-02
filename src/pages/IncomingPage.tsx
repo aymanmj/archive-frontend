@@ -1,1967 +1,579 @@
-import { useEffect, useState, useCallback } from "react";
-import { useAuthStore } from "../stores/authStore";
-import { Link } from "react-router-dom";
+// src/pages/IncomingPage.tsx
+import { useEffect, useMemo, useState } from 'react';
+import api from '../api/apiClient'; // لو ملفك في مسار آخر عدّل الاستيراد
+import { useAuthStore } from '../stores/authStore';
 
-// --- الأنواع (Types) ---
-type IncomingItem = {
+type IncomingRow = {
   id: string;
   incomingNumber: string;
   receivedDate: string;
-  deliveryMethod: string;
-  urgencyLevel: string | null;
-  requiredAction: string | null;
-  externalParty: { name: string | null };
-  targetDepartment?: { id: number | null; name: string | null } | null;
-  owningDepartment?: { id: number; name: string } | null;
-  subject?: string | null;
-  documentId: string | null;
-  hasFiles: boolean;
+  externalPartyName: string;
+  document?: { id: string; title: string } | null;
+  hasFiles?: boolean;
 };
 
 type Department = {
   id: number;
   name: string;
-  status: string;
+  status: 'Active' | 'Inactive' | string;
 };
 
-type FileItem = {
-  id: string;
-  fileNameOriginal: string;
-  storagePath: string;
-  versionNumber: number;
-  uploadedAt: string;
-  uploadedBy: string | null;
-  isLatestVersion: boolean;
-  url: string; // يبدأ بـ /uploads/...
-};
+export default function IncomingPage() {
+  const [rows, setRows] = useState<IncomingRow[]>([]);
+  const [loading, setLoading] = useState(false);
 
-function formatDate(d?: string | Date | null) {
-  if (!d) return "—";
-  const dt = new Date(d);
-  if (Number.isNaN(dt.getTime())) return "—";
-  return dt.toLocaleString("ar-LY", { hour12: true });
-}
-
-function IncomingPage() {
-  const token = useAuthStore((state) => state.token);
-  const currentUserDeptId = useAuthStore((state) => state.user?.department?.id ?? null);
-
+  // الإدارات
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [tab, setTab] = useState<"all" | "dept">("all");
-  const [items, setItems] = useState<IncomingItem[]>([]);
-  const [loadingList, setLoadingList] = useState(true);
+  const [depsLoading, setDepsLoading] = useState(false);
 
-  // نموذج تسجيل وارد
-  const [departmentId, setDepartmentId] = useState<number | null>(null);
-  const [externalPartyName, setExternalPartyName] = useState("");
-  const [externalPartyType, setExternalPartyType] = useState("جهة خارجية");
-  const [deliveryMethod, setDeliveryMethod] = useState("Hand");
-  const [urgencyLevel, setUrgencyLevel] = useState("Normal");
-  const [requiredAction, setRequiredAction] = useState("للعلم");
-  const [summary, setSummary] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [msgError, setMsgError] = useState("");
-  const [msgInfo, setMsgInfo] = useState("");
+  // form
+  const [documentTitle, setDocumentTitle] = useState('');
+  const [owningDepartmentId, setOwningDepartmentId] = useState<number | ''>('');
+  const [externalPartyName, setExternalPartyName] = useState('');
+  const [deliveryMethod, setDeliveryMethod] = useState('Hand');
 
-  // مودال الرفع
-  const [showUploadModal, setShowUploadModal] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState("");
-  const [uploadInfo, setUploadInfo] = useState("");
-  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  // filters
+  const [q, setQ] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
-  // مودال عرض المرفقات
-  const [showFilesModal, setShowFilesModal] = useState(false);
-  const [filesDocId, setFilesDocId] = useState<string | null>(null);
-  const [filesLoading, setFilesLoading] = useState(false);
-  const [filesError, setFilesError] = useState("");
-  const [files, setFiles] = useState<FileItem[]>([]);
+  // toast
+  const [toast, setToast] = useState<{ type: 'success'|'error', msg: string }|null>(null);
+  const showToast = (t: 'success'|'error', msg: string) => {
+    setToast({ type: t, msg });
+    setTimeout(() => setToast(null), 3500);
+  };
 
-  // تحميل الأقسام + جدول الوارد
-  useEffect(() => {
-    if (!token) {
-      setLoadingList(false);
-      return;
-    }
-    const loadPageData = async () => {
-      setLoadingList(true);
-      await Promise.all([
-        (async () => {
-          try {
-            const res = await fetch("http://localhost:3000/departments", {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (!res.ok) throw new Error("Failed to fetch departments");
-            const data = await res.json();
-            const active = data.filter((d: any) => d.status === "Active");
-            setDepartments(active);
-            if (active.length > 0 && departmentId === null) {
-              setDepartmentId(active[0].id);
-            }
-          } catch (err) {
-            console.error("loadDepartments error:", err);
-          }
-        })(),
-        (async () => {
-          let url = "http://localhost:3000/incoming";
-          if (tab === "dept") {
-            if (!currentUserDeptId) {
-              setItems([]);
-              return;
-            }
-            url = "http://localhost:3000/incoming/my-dept";
-          }
-          try {
-            const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-            setItems(res.ok ? await res.json() : []);
-          } catch (err) {
-            console.error(`Failed to load incoming for tab: ${tab}`, err);
-            setItems([]);
-          }
-        })(),
-      ]);
-      setLoadingList(false);
-    };
-    loadPageData();
-  }, [token, tab, currentUserDeptId, departmentId]);
-
-  const refreshList = useCallback(async () => {
-    if (!token) return;
-    setLoadingList(true);
-    let url = "http://localhost:3000/incoming";
-    if (tab === "dept" && currentUserDeptId) {
-      url = "http://localhost:3000/incoming/my-dept";
-    } else if (tab === "dept") {
-      setItems([]); setLoadingList(false); return;
-    }
+  // تحميل الإدارات
+  const loadDepartments = async () => {
+    setDepsLoading(true);
     try {
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      setItems(res.ok ? await res.json() : []);
-    } catch (e) { setItems([]); } finally { setLoadingList(false); }
-  }, [token, tab, currentUserDeptId]);
-
-  // إرسال وارد جديد
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setMsgError("");
-    setMsgInfo("");
-
-    if (!externalPartyName.trim()) {
-      setMsgError("يرجى إدخال اسم الجهة المرسلة.");
-      return;
-    }
-    if (!summary.trim()) {
-      setMsgError("يرجى إدخال ملخص أو عنوان للخطاب.");
-      return;
-    }
-    if (!departmentId) {
-      setMsgError("يرجى اختيار الإدارة المستهدفة.");
-      return;
-    }
-    if (!token) {
-      setMsgError("انتهت الجلسة، يرجى تسجيل الدخول مرة أخرى.");
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const res = await fetch("http://localhost:3000/incoming", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          externalPartyName, externalPartyType, deliveryMethod,
-          urgencyLevel, requiredAction, summary, departmentId,
-        }),
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => null);
-        if (errorData && Array.isArray(errorData.message)) {
-          throw new Error(errorData.message.join(", "));
-        }
-        throw new Error(`تعذر تسجيل الوارد. رمز الحالة: ${res.status}`);
+      const res = await api.get<Department[]>('/departments');
+      const list = Array.isArray(res.data) ? res.data : [];
+      // نرشّح الإدارات الفعّالة فقط
+      const active = list.filter(d => (d.status || '').toLowerCase() === 'active');
+      setDepartments(active);
+      // إن لم يكن هناك اختيار مسبق، حاول ضبط أول إدارة افتراضيًا
+      if (!owningDepartmentId && active.length > 0) {
+        setOwningDepartmentId(active[0].id);
       }
-
-      const created = await res.json();
-      setExternalPartyName("");
-      setExternalPartyType("جهة خارجية");
-      setSummary("");
-      setMsgInfo("تم تسجيل الكتاب الوارد بنجاح ✅");
-      await refreshList();
-      if (created?.document?.id) {
-        openUploadModalForDoc(created.document.id);
-      }
-    } catch (err: any) {
-      console.error(err);
-      setMsgError(err.message || "خطأ في الاتصال بالخادم أثناء تسجيل الوارد");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  // فتح مودال الرفع
-  function openUploadModalForDoc(docId: string) {
-    setUploadError("");
-    setUploadInfo("");
-    setSelectedFile(null);
-    setSelectedDocId(docId);
-    setShowUploadModal(true);
-  }
-
-  // رفع مرفق
-  async function handleUpload(e: React.FormEvent) {
-    e.preventDefault();
-    if (!token || !selectedDocId || !selectedFile) {
-      setUploadError("بيانات غير مكتملة للرفع.");
-      return;
-    }
-    setUploading(true);
-    setUploadError("");
-    setUploadInfo("");
-    const formData = new FormData();
-    formData.append("file", selectedFile);
-    try {
-      const res = await fetch(`http://localhost:3000/files/upload/${selectedDocId}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-      if (!res.ok) throw new Error("فشل رفع الملف");
-      await res.json();
-      setUploadInfo("تم رفع الملف وربطه بالمعاملة ✅");
-
-      // تفاؤليًا: حدّث الصف الحالي ليعرض "مرفق" فورًا
-      setItems((old) =>
-        old.map((r) =>
-          r.documentId === selectedDocId ? { ...r, hasFiles: true } : r
-        )
-      );
-
-      // ثمّ حدّث القائمة من الخادم أيضًا
-      await refreshList();
-    } catch (err) {
-      console.error(err);
-      setUploadError("خطأ في الاتصال بالخادم أثناء الرفع");
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  // فتح مودال عرض المرفقات
-  async function openFilesModal(docId: string) {
-    if (!token) return;
-    setFilesDocId(docId);
-    setFiles([]);
-    setFilesError("");
-    setFilesLoading(true);
-    setShowFilesModal(true);
-    try {
-      const res = await fetch(`http://localhost:3000/files/by-document/${docId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error("فشل جلب المرفقات");
-      const data = await res.json();
-      setFiles(data || []);
     } catch (e: any) {
-      setFilesError(e.message || "تعذر تحميل المرفقات");
+      console.error('[IncomingPage] loadDepartments error:', e?.response?.data || e?.message || e);
+      showToast('error', 'تعذّر تحميل الإدارات');
     } finally {
-      setFilesLoading(false);
+      setDepsLoading(false);
     }
-  }
+  };
+
+  // تحميل الواردات
+  const loadRows = async () => {
+    setLoading(true);
+    try {
+      const res = await api.get('/incoming/my-latest', { params: {} });
+      setRows(res.data || []);
+    } catch (e: any) {
+      console.error('[IncomingPage] load error:', e?.response?.data || e?.message || e);
+      const msg = e?.response?.data?.message || e?.message || 'فشل تحميل البيانات';
+      showToast('error', Array.isArray(msg) ? msg.join(' | ') : String(msg));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    // نحمّل الإدارات والواردات معًا
+    loadDepartments();
+    loadRows();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const filtered = useMemo(() => {
+    return rows.filter(r => {
+      const inRange = (() => {
+        if (!dateFrom && !dateTo) return true;
+        const d = new Date(r.receivedDate).getTime();
+        if (dateFrom && d < new Date(dateFrom).getTime()) return false;
+        if (dateTo && d > new Date(dateTo).getTime()) return false;
+        return true;
+      })();
+      const qq = q.trim().toLowerCase();
+      const hit = !qq || r.incomingNumber.toLowerCase().includes(qq) ||
+        (r.externalPartyName ?? '').toLowerCase().includes(qq) ||
+        (r.document?.title ?? '').toLowerCase().includes(qq);
+      return inRange && hit;
+    });
+  }, [rows, q, dateFrom, dateTo]);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!documentTitle.trim()) return showToast('error', 'يرجى إدخال العنوان');
+    if (!owningDepartmentId) return showToast('error', 'يرجى اختيار القسم المالِك');
+    if (!externalPartyName.trim()) return showToast('error', 'يرجى إدخال اسم الجهة');
+
+    try {
+      const body = {
+        documentTitle,
+        owningDepartmentId: Number(owningDepartmentId),
+        externalPartyName,
+        deliveryMethod,
+      };
+      const res = await api.post('/incoming', body);
+      showToast('success', `تم إنشاء وارد رقم ${res.data?.incomingNumber}`);
+      setDocumentTitle('');
+      // نترك اختيار القسم كما هو — غالبًا سيستمر المستخدم على نفس الإدارة
+      setExternalPartyName('');
+      setDeliveryMethod('Hand');
+      await loadRows();
+    } catch (e: any) {
+      console.error('[IncomingPage] create error:', e?.response?.data || e?.message || e);
+      const msg = e?.response?.data?.message ?? 'فشل إنشاء الوارد';
+      showToast('error', Array.isArray(msg) ? msg.join(' | ') : String(msg));
+    }
+  };
 
   return (
-    <div dir="rtl" className="min-h-screen bg-slate-100 text-slate-800 p-6">
-      <div className="max-w-5xl mx-auto space-y-6">
-        <div className="flex items-start justify-between">
-          <div className="text-right">
-            <h1 className="text-2xl font-semibold text-slate-800">الوارد</h1>
-            <p className="text-sm text-slate-500">
-              تسجيل كتاب وارد جديد وعرض آخر المعاملات الواردة
-            </p>
-          </div>
-          <div className="flex flex-col gap-2 text-left">
-            <Link to="/dashboard" className="text-xs bg-slate-500 text-white px-3 py-1.5 rounded-lg hover:bg-slate-600">
-              ← لوحة التحكم
-            </Link>
-            <Link to="/departments" className="text-xs bg-slate-700 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800">
-              ← إدارات المؤسسة
-            </Link>
-          </div>
+    <div className="space-y-6" dir="rtl">
+      <header className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">الوارد</h1>
+          <p className="text-sm text-gray-500 mt-1">إدارة المعاملات الواردة وعرض آخر التحديثات</p>
         </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { loadDepartments(); loadRows(); }}
+            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+          >
+            تحديث
+          </button>
+        </div>
+      </header>
 
-        {msgError && <div className="bg-red-100 text-red-700 text-sm p-3 rounded-lg text-right">{msgError}</div>}
-        {msgInfo && <div className="bg-green-100 text-green-700 text-sm p-3 rounded-lg text-right flex items-start gap-2"><span>✅</span><span>{msgInfo}</span></div>}
-        
-        {/* نموذج تسجيل وارد */}
-        <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-xl shadow p-4 text-right space-y-4">
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">الجهة المرسلة</label>
-              <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={externalPartyName} onChange={(e) => setExternalPartyName(e.target.value)} placeholder="مثال: وزارة المالية" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">نوع الجهة</label>
-              <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={externalPartyType} onChange={(e) => setExternalPartyType(e.target.value)} placeholder="وزارة / شركة / سفارة ..." />
-            </div>
-          </div>
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">طريقة الاستلام</label>
-              <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={deliveryMethod} onChange={(e) => setDeliveryMethod(e.target.value)}>
-                <option value="Hand">تسليم باليد</option>
-                <option value="OfficialEmail">بريد رسمي</option>
-                <option value="Courier">مندوب</option>
-                <option value="Fax">فاكس رسمي</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">درجة الأهمية</label>
-              <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={urgencyLevel} onChange={(e) => setUrgencyLevel(e.target.value)}>
-                <option value="Normal">عادي</option>
-                <option value="Urgent">عاجل ⚠️</option>
-                <option value="VeryUrgent">عاجل جدًا 🔥</option>
-              </select>
-            </div>
-          </div>
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">الإجراء المطلوب</label>
-              <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={requiredAction} onChange={(e) => setRequiredAction(e.target.value)} placeholder="للعلم / للرد / للدراسة القانونية ..." />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">الإدارة المستهدفة</label>
-              {departments.length === 0 && !loadingList ? (
-                <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">لا توجد إدارات نشطة متاحة حاليًا</div>
-              ) : (
-                <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={departmentId ?? ""} onChange={(e) => setDepartmentId(Number(e.target.value))}>
-                  {departments.map((d) => (<option key={d.id} value={d.id}>{d.name}</option>))}
-                </select>
-              )}
-            </div>
-          </div>
+      {/* بطاقة الإنشاء السريع */}
+      <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
+        <h2 className="text-lg font-semibold mb-4">إنشاء وارد سريع</h2>
+
+        <form onSubmit={handleCreate} className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">ملخص / عنوان الخطاب</label>
-            <textarea className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" rows={2} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="مثال: طلب تزويد بتقارير الربع المالي الأخير..." />
+            <label className="block text-sm mb-1">الموضوع/عنوان الوثيقة</label>
+            <input
+              className="w-full border rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              value={documentTitle}
+              onChange={e => setDocumentTitle(e.target.value)}
+            />
           </div>
+
           <div>
-            <button type="submit" disabled={submitting} className="bg-blue-600 text-white text-sm font-medium py-2 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-              {submitting ? "جاري التسجيل..." : "تسجيل الوارد"}
+            <label className="block text-sm mb-1">طريقة التسليم</label>
+            <select
+              className="w-full border rounded-xl p-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              value={deliveryMethod}
+              onChange={e => setDeliveryMethod(e.target.value)}
+            >
+              <option value="Hand">تسليم باليد</option>
+              <option value="Mail">بريد رسمي</option>
+              <option value="Email">بريد إلكتروني</option>
+              <option value="Courier">مندوب/ساعي</option>
+              <option value="Fax">فاكس</option>
+              <option value="ElectronicSystem">عن طريق المنظومة</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm mb-1">القسم المالِك</label>
+            <select
+              className="w-full border rounded-xl p-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              value={owningDepartmentId === '' ? '' : String(owningDepartmentId)}
+              onChange={e => {
+                const v = e.target.value;
+                setOwningDepartmentId(v === '' ? '' : Number(v));
+              }}
+              disabled={depsLoading}
+            >
+              <option value="">{depsLoading ? 'جاري التحميل…' : 'اختر القسم'}</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            {(!depsLoading && departments.length === 0) && (
+              <p className="text-xs text-amber-600 mt-1">لا توجد إدارات فعّالة.</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm mb-1">الجهة</label>
+            <input
+              className="w-full border rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              value={externalPartyName}
+              onChange={e => setExternalPartyName(e.target.value)}
+            />
+          </div>
+
+          <div className="md:col-span-2">
+            <button
+              className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2"
+              disabled={depsLoading || departments.length === 0}
+            >
+              إنشاء
             </button>
           </div>
         </form>
+      </section>
 
-        {/* جدول الوارد */}
-        <div className="bg-white border border-slate-200 rounded-xl shadow p-4 text-right">
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-            <h2 className="text-base font-semibold text-slate-700">آخر المعاملات الواردة</h2>
-            <div className="flex items-center gap-2 text-xs">
-              <button onClick={() => setTab("all")} className={`px-3 py-1.5 rounded-lg border text-xs ${tab === "all" ? "bg-slate-800 text-white border-slate-800" : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200"}`}>
-                كل الوارد
-              </button>
-              {currentUserDeptId != null && (
-                <button onClick={() => setTab("dept")} className={`px-3 py-1.5 rounded-lg border text-xs ${tab === "dept" ? "bg-slate-800 text-white border-slate-800" : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200"}`}>
-                  وارد إدارتنا
-                </button>
-              )}
-            </div>
-            {loadingList && <span className="text-[11px] text-slate-500">...جاري التحديث</span>}
+      {/* بطاقة الجدول + الفلاتر */}
+      <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="md:col-span-2">
+            <label className="block text-sm mb-1">بحث برقم/جهة/عنوان</label>
+            <input
+              placeholder="ابحث هنا…"
+              className="w-full border rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              value={q}
+              onChange={e => setQ(e.target.value)}
+            />
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-slate-600 border-b border-slate-200">
-                <tr className="text-right">
-                  <th className="py-2 px-3">الرقم الوارد</th>
-                  <th className="py-2 px-3">الجهة المرسلة</th>
-                  <th className="py-2 px-3">{tab === "dept" ? "المكلف / ملاحظات" : "الإدارة الموجه لها"}</th>
-                  <th className="py-2 px-3">الموضوع</th>
-                  <th className="py-2 px-3">الأهمية</th>
-                  <th className="py-2 px-3">تاريخ الاستلام</th>
-                  <th className="py-2 px-3">المرفق</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loadingList ? (
-                  <tr><td colSpan={7} className="text-center text-slate-500 py-6 text-sm">...جاري تحميل البيانات</td></tr>
-                ) : items.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="text-center text-slate-500 py-6 text-sm">
-                      {tab === "dept" ? (currentUserDeptId == null ? "حسابك غير مرتبط بإدارة محددة." : "لا توجد معاملات واردة مسندة لإدارتك.") : "لا توجد معاملات واردة بعد."}
-                    </td>
-                  </tr>
-                ) : (
-                  items.map((rec) => (
-                    <tr key={rec.id} className="border-b border-slate-100 last:border-none">
-                      <td className="py-2 px-3 font-mono text-xs text-blue-700 underline">
-                        <Link to={`/incoming/${rec.id}`}>{rec.incomingNumber}</Link>
-                      </td>
-                      <td className="py-2 px-3">{rec.externalParty?.name || "—"}</td>
-                      <td className="py-2 px-3 text-slate-700">{rec.targetDepartment?.name || rec.owningDepartment?.name || "—"}</td>
-                      <td className="py-2 px-3">{rec.subject || "—"}</td>
-                      <td className="py-2 px-3">{rec.urgencyLevel === "VeryUrgent" ? "عاجل جدًا 🔥" : rec.urgencyLevel === "Urgent" ? "عاجل ⚠️" : "عادي"}</td>
-                      <td className="py-2 px-3">{formatDate(rec.receivedDate)}</td>
-                      <td className="py-2 px-3">
-                        {rec.hasFiles ? (
-                          <div className="flex items-center gap-2">
-                            <span className="inline-flex items-center gap-1 text-slate-700 bg-slate-200 text-xs font-medium px-2 py-1 rounded">
-                              <span>📎</span><span>مرفق</span>
-                            </span>
-                            {rec.documentId && (
-                              <button
-                                className="text-xs bg-slate-700 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800"
-                                onClick={() => openFilesModal(rec.documentId as string)}
-                              >
-                                عرض
-                              </button>
-                            )}
-                          </div>
-                        ) : rec.documentId ? (
-                          <button
-                            className="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-lg hover:bg-slate-900"
-                            onClick={() => openUploadModalForDoc(rec.documentId as string)}
-                          >
-                            إرفاق
-                          </button>
-                        ) : ("—")}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+
+          <div>
+            <label className="block text-sm mb-1">من تاريخ</label>
+            <input
+              type="date"
+              className="w-full border rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm mb-1">إلى تاريخ</label>
+            <input
+              type="date"
+              className="w-full border rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+            />
           </div>
         </div>
 
-        {/* مودال رفع مرفق */}
-        {showUploadModal && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-4 text-right space-y-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="text-lg font-semibold text-slate-800">إرفاق ملف للمعاملة</h3>
-                  <p className="text-xs text-slate-500">يمكن رفع PDF أو صورة مسح ضوئي.</p>
-                </div>
-                <button className="text-slate-400 hover:text-slate-600 text-lg leading-none" onClick={() => { setShowUploadModal(false); }}>
-                  ×
-                </button>
-              </div>
-              {uploadError && <div className="bg-red-100 text-red-700 text-xs p-2 rounded-lg">{uploadError}</div>}
-              {uploadInfo && <div className="bg-green-100 text-green-700 text-xs p-2 rounded-lg">{uploadInfo}</div>}
-              <form onSubmit={handleUpload} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">اختر ملف</label>
-                  <input
-                    type="file"
-                    className="block w-full text-sm text-slate-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-slate-800 file:text-white hover:file:bg-slate-900"
-                    onChange={(e) => { setSelectedFile(e.target.files?.[0] ?? null); }}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <button
-                    type="submit"
-                    disabled={uploading}
-                    className="bg-blue-600 text-white text-sm font-medium py-2 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {uploading ? "جاري الرفع..." : "رفع المرفق"}
-                  </button>
-                  <button
-                    type="button"
-                    className="text-xs text-slate-600 hover:text-slate-800"
-                    onClick={() => { setShowUploadModal(false); }}
-                  >
-                    إلغاء
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => { setQ(''); setDateFrom(''); setDateTo(''); }}
+            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+          >
+            مسح الفلاتر
+          </button>
+          <div className="text-xs text-gray-500">نتائج: {filtered.length}</div>
+        </div>
 
-        {/* مودال عرض المرفقات */}
-        {showFilesModal && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-4 text-right space-y-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="text-lg font-semibold text-slate-800">المرفقات</h3>
-                  <p className="text-xs text-slate-500">قائمة الملفات المرتبطة بالمعاملة</p>
-                </div>
-                <button
-                  className="text-slate-400 hover:text-slate-600 text-lg leading-none"
-                  onClick={() => { setShowFilesModal(false); }}
-                >
-                  ×
-                </button>
-              </div>
-
-              {filesLoading && <div className="text-sm text-slate-600">...جاري تحميل المرفقات</div>}
-              {filesError && <div className="bg-red-100 text-red-700 text-xs p-2 rounded-lg">{filesError}</div>}
-
-              {!filesLoading && !filesError && (
-                files.length === 0 ? (
-                  <div className="text-sm text-slate-600">لا توجد مرفقات.</div>
-                ) : (
-                  <div className="border border-slate-200 rounded-lg overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead className="bg-slate-50 text-slate-600">
-                        <tr>
-                          <th className="py-2 px-3">الملف</th>
-                          <th className="py-2 px-3">الإصدار</th>
-                          <th className="py-2 px-3">تاريخ الرفع</th>
-                          <th className="py-2 px-3">المرفوع بواسطة</th>
-                          <th className="py-2 px-3">فتح</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {files.map((f) => (
-                          <tr key={f.id} className="border-t border-slate-100">
-                            <td className="py-2 px-3">{f.fileNameOriginal}</td>
-                            <td className="py-2 px-3">{f.versionNumber}{f.isLatestVersion ? " (الأحدث)" : ""}</td>
-                            <td className="py-2 px-3">{formatDate(f.uploadedAt)}</td>
-                            <td className="py-2 px-3">{f.uploadedBy || "—"}</td>
-                            <td className="py-2 px-3">
-                              <a
-                                href={`http://localhost:3000${f.url}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-lg hover:bg-slate-900"
-                              >
-                                فتح
-                              </a>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )
+        <div className="overflow-auto rounded-xl border">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="bg-gray-100">
+                <th className="text-right p-2">رقم الوارد</th>
+                <th className="text-right p-2">التاريخ</th>
+                <th className="text-right p-2">الجهة</th>
+                <th className="text-right p-2">العنوان</th>
+                <th className="text-right p-2">ملفات؟</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr><td colSpan={5} className="p-4 text-center">جاري التحميل...</td></tr>
               )}
+              {!loading && filtered.length === 0 && (
+                <tr><td colSpan={5} className="p-4 text-center">لا توجد بيانات</td></tr>
+              )}
+              {!loading && filtered.map(r => (
+                <tr key={r.id} className="border-t hover:bg-gray-50">
+                  <td className="p-2 font-mono">{r.incomingNumber}</td>
+                  <td className="p-2">
+                    {new Date(r.receivedDate).toLocaleString('ar-LY', {
+                      year: 'numeric', month: '2-digit', day: '2-digit',
+                      hour: '2-digit', minute: '2-digit'
+                    })}
+                  </td>
+                  <td className="p-2">{r.externalPartyName}</td>
+                  <td className="p-2">{r.document?.title ?? '—'}</td>
+                  <td className="p-2">{r.hasFiles ? '✅' : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
-              <div className="flex items-center justify-end gap-2">
-                {filesDocId && (
-                  <button
-                    className="text-xs bg-slate-700 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800"
-                    onClick={() => { setShowFilesModal(false); openUploadModalForDoc(filesDocId); }}
-                  >
-                    إرفاق جديد
-                  </button>
-                )}
-                <button
-                  className="text-xs text-slate-600 hover:text-slate-800"
-                  onClick={() => setShowFilesModal(false)}
-                >
-                  إغلاق
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-      </div>
+      {toast && (
+        <div
+          className={`fixed bottom-4 left-4 right-4 md:right-auto md:left-auto md:bottom-6 md:start-6 z-40
+            rounded-xl px-4 py-3 shadow-lg border
+            ${toast.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}
+        >
+          {toast.msg}
+        </div>
+      )}
     </div>
   );
 }
 
-export default IncomingPage;
 
 
 
-// import { useEffect, useState, useCallback } from "react";
-// import { useAuthStore } from "../stores/authStore";
-// import { Link } from "react-router-dom";
+// import { useEffect, useMemo, useState } from 'react';
+// import api from '../api/apiClient';
+// import { useAuthStore } from '../stores/authStore';
 
-// type IncomingItem = {
+// type IncomingRow = {
 //   id: string;
 //   incomingNumber: string;
 //   receivedDate: string;
-//   deliveryMethod: string;
-//   urgencyLevel: string | null;
-//   requiredAction: string | null;
-//   externalParty: { name: string | null };
-//   targetDepartment?: { id: number | null; name: string | null } | null;
-//   owningDepartment?: { id: number; name: string } | null;
-//   subject?: string | null;
-//   documentId: string | null;
-//   hasFiles: boolean;
+//   externalPartyName: string;
+//   document?: { id: string; title: string } | null;
+//   hasFiles?: boolean;
 // };
 
-// type Department = { id: number; name: string; status: string };
+// export default function IncomingPage() {
+//   const [rows, setRows] = useState<IncomingRow[]>([]);
+//   const [loading, setLoading] = useState(false);
 
-// type DocFile = {
-//   id: string;
-//   fileNameOriginal: string;
-//   versionNumber: number;
-//   uploadedAt: string;
-//   uploadedBy: string | null;
-//   url: string;
-// };
+//   // form
+//   const [documentTitle, setDocumentTitle] = useState('');
+//   const [owningDepartmentId, setOwningDepartmentId] = useState<number | ''>('');
+//   const [externalPartyName, setExternalPartyName] = useState('');
+//   const [deliveryMethod, setDeliveryMethod] = useState('Hand');
 
-// function formatDate(d?: string | Date | null) {
-//   if (!d) return "—";
-//   const dt = new Date(d);
-//   if (Number.isNaN(dt.getTime())) return "—";
-//   return dt.toLocaleString("ar-LY", { hour12: true });
-// }
+//   // filters
+//   const [q, setQ] = useState('');
+//   const [dateFrom, setDateFrom] = useState('');
+//   const [dateTo, setDateTo] = useState('');
 
-// function IncomingPage() {
-//   const token = useAuthStore((s) => s.token);
-//   const currentUserDeptId = useAuthStore((s) => s.user?.department?.id ?? null);
-
-//   const [departments, setDepartments] = useState<Department[]>([]);
-//   const [tab, setTab] = useState<"all" | "dept">("all");
-//   const [items, setItems] = useState<IncomingItem[]>([]);
-//   const [loadingList, setLoadingList] = useState(true);
-
-//   // إنشاء وارد
-//   const [departmentId, setDepartmentId] = useState<number | null>(null);
-//   const [externalPartyName, setExternalPartyName] = useState("");
-//   const [externalPartyType, setExternalPartyType] = useState("جهة خارجية");
-//   const [deliveryMethod, setDeliveryMethod] = useState("Hand");
-//   const [urgencyLevel, setUrgencyLevel] = useState("Normal");
-//   const [requiredAction, setRequiredAction] = useState("للعلم");
-//   const [summary, setSummary] = useState("");
-//   const [submitting, setSubmitting] = useState(false);
-//   const [msgError, setMsgError] = useState("");
-//   const [msgInfo, setMsgInfo] = useState("");
-
-//   // المرفقات (مودال)
-//   const [showUploadModal, setShowUploadModal] = useState(false);
-//   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-//   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-//   const [uploading, setUploading] = useState(false);
-//   const [uploadError, setUploadError] = useState("");
-//   const [uploadInfo, setUploadInfo] = useState("");
-//   const [progressMap, setProgressMap] = useState<Record<string, number>>({}); // per filename
-
-//   // عرض قائمة المرفقات
-//   const [showFilesForDocId, setShowFilesForDocId] = useState<string | null>(null);
-//   const [docFiles, setDocFiles] = useState<DocFile[]>([]);
-//   const [loadingFiles, setLoadingFiles] = useState(false);
-//   const [renameEditingId, setRenameEditingId] = useState<string | null>(null);
-//   const [renameValue, setRenameValue] = useState("");
-
-//   useEffect(() => {
-//     if (!token) { setLoadingList(false); return; }
-//     const load = async () => {
-//       setLoadingList(true);
-//       await Promise.all([
-//         (async () => {
-//           try {
-//             const res = await fetch("http://localhost:3000/departments", {
-//               headers: { Authorization: `Bearer ${token}` },
-//             });
-//             const data = res.ok ? await res.json() : [];
-//             const active = data.filter((d: any) => d.status === "Active");
-//             setDepartments(active);
-//             if (active.length > 0 && departmentId === null) setDepartmentId(active[0].id);
-//           } catch (e) { /* ignore */ }
-//         })(),
-//         (async () => {
-//           let url = "http://localhost:3000/incoming";
-//           if (tab === "dept") {
-//             if (!currentUserDeptId) { setItems([]); return; }
-//             url = "http://localhost:3000/incoming/my-dept";
-//           }
-//           try {
-//             const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-//             setItems(res.ok ? await res.json() : []);
-//           } catch { setItems([]); }
-//         })(),
-//       ]);
-//       setLoadingList(false);
-//     };
-//     load();
-//   }, [token, tab, currentUserDeptId, departmentId]);
-
-//   const refreshList = useCallback(async () => {
-//     if (!token) return;
-//     setLoadingList(true);
-//     let url = "http://localhost:3000/incoming";
-//     if (tab === "dept" && currentUserDeptId) url = "http://localhost:3000/incoming/my-dept";
-//     else if (tab === "dept") { setItems([]); setLoadingList(false); return; }
-//     try {
-//       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-//       setItems(res.ok ? await res.json() : []);
-//     } catch { setItems([]); }
-//     setLoadingList(false);
-//   }, [token, tab, currentUserDeptId]);
-
-//   // إنشاء وارد
-//   async function handleSubmit(e: React.FormEvent) {
-//     e.preventDefault();
-//     setMsgError(""); setMsgInfo("");
-//     if (!externalPartyName.trim()) { setMsgError("يرجى إدخال اسم الجهة المرسلة."); return; }
-//     if (!summary.trim()) { setMsgError("يرجى إدخال ملخص أو عنوان للخطاب."); return; }
-//     if (!departmentId) { setMsgError("يرجى اختيار الإدارة المستهدفة."); return; }
-//     if (!token) { setMsgError("انتهت الجلسة، يرجى تسجيل الدخول."); return; }
-//     setSubmitting(true);
-//     try {
-//       const res = await fetch("http://localhost:3000/incoming", {
-//         method: "POST",
-//         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-//         body: JSON.stringify({ externalPartyName, externalPartyType, deliveryMethod, urgencyLevel, requiredAction, summary, departmentId }),
-//       });
-//       if (!res.ok) {
-//         const e = await res.json().catch(()=>null);
-//         const m = e?.message ? (Array.isArray(e.message)? e.message.join(", ") : e.message) : `تعذر تسجيل الوارد (${res.status})`;
-//         throw new Error(m);
-//       }
-//       const created = await res.json();
-//       setExternalPartyName(""); setExternalPartyType("جهة خارجية"); setSummary("");
-//       setMsgInfo("تم تسجيل الكتاب الوارد بنجاح ✅");
-//       document.querySelector("table")?.scrollIntoView({ behavior: "smooth" });
-//       await refreshList();
-//       if (created?.document?.id) openUploadModalForDoc(created.document.id);
-//     } catch (err:any) {
-//       setMsgError(err.message || "خطأ في الاتصال بالخادم");
-//     } finally { setSubmitting(false); }
-//   }
-
-//   // فتح مودال الرفع
-//   function openUploadModalForDoc(docId: string) {
-//     setUploadError(""); setUploadInfo("");
-//     setSelectedFiles([]); setProgressMap({});
-//     setSelectedDocId(docId); setShowUploadModal(true);
-//   }
-
-//   // تحميل قائمة الملفات لوثيقة
-//   const loadDocFiles = useCallback(async (docId: string) => {
-//     if (!token) return;
-//     setLoadingFiles(true);
-//     try {
-//       const res = await fetch(`http://localhost:3000/files/documents/${docId}`, {
-//         headers: { Authorization: `Bearer ${token}` },
-//       });
-//       const data = res.ok ? await res.json() : [];
-//       setDocFiles(data);
-//     } catch { setDocFiles([]); }
-//     setLoadingFiles(false);
-//   }, [token]);
-
-//   // إظهار/إخفاء قائمة المرفقات لصف
-//   const toggleShowFiles = async (docId: string | null) => {
-//     if (!docId) return;
-//     if (showFilesForDocId === docId) { setShowFilesForDocId(null); return; }
-//     setShowFilesForDocId(docId);
-//     await loadDocFiles(docId);
+//   // toast
+//   const [toast, setToast] = useState<{ type: 'success'|'error', msg: string }|null>(null);
+//   const showToast = (t: 'success'|'error', msg: string) => {
+//     setToast({ type: t, msg });
+//     setTimeout(() => setToast(null), 3500);
 //   };
 
-//   // رفع عدة ملفات مع تقدم
-//   async function handleUpload(e: React.FormEvent) {
+//   const load = async () => {
+//     setLoading(true);
+//     try {
+//       const res = await api.get('/incoming/my-latest', { params: {} });
+//       setRows(res.data || []);
+//     } catch (e: any) {
+//       console.error('[IncomingPage] load error:', e?.response?.data || e?.message || e);
+//       const msg = e?.response?.data?.message || e?.message || 'فشل تحميل البيانات';
+//       showToast('error', Array.isArray(msg) ? msg.join(' | ') : String(msg));
+//     } finally {
+//       setLoading(false);
+//     }
+//   };
+
+//   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+
+//   const filtered = useMemo(() => {
+//     return rows.filter(r => {
+//       const inRange = (() => {
+//         if (!dateFrom && !dateTo) return true;
+//         const d = new Date(r.receivedDate).getTime();
+//         if (dateFrom && d < new Date(dateFrom).getTime()) return false;
+//         if (dateTo && d > new Date(dateTo).getTime()) return false;
+//         return true;
+//       })();
+//       const qq = q.trim().toLowerCase();
+//       const hit = !qq || r.incomingNumber.toLowerCase().includes(qq) ||
+//         (r.externalPartyName ?? '').toLowerCase().includes(qq) ||
+//         (r.document?.title ?? '').toLowerCase().includes(qq);
+//       return inRange && hit;
+//     });
+//   }, [rows, q, dateFrom, dateTo]);
+
+//   const handleCreate = async (e: React.FormEvent) => {
 //     e.preventDefault();
-//     if (!token || !selectedDocId || selectedFiles.length === 0) {
-//       setUploadError("يرجى اختيار ملف واحد على الأقل."); return;
+//     if (!documentTitle.trim()) return showToast('error', 'يرجى إدخال العنوان');
+//     if (!owningDepartmentId) return showToast('error', 'يرجى اختيار القسم المالِك');
+//     if (!externalPartyName.trim()) return showToast('error', 'يرجى إدخال اسم الجهة');
+
+//     try {
+//       const body = { documentTitle, owningDepartmentId: Number(owningDepartmentId), externalPartyName, deliveryMethod };
+//       const res = await api.post('/incoming', body);
+//       showToast('success', `تم إنشاء وارد رقم ${res.data?.incomingNumber}`);
+//       setDocumentTitle('');
+//       setOwningDepartmentId('');
+//       setExternalPartyName('');
+//       setDeliveryMethod('Hand');
+//       await load();
+//     } catch (e: any) {
+//       console.error('[IncomingPage] create error:', e?.response?.data || e?.message || e);
+//       const msg = e?.response?.data?.message ?? 'فشل إنشاء الوارد';
+//       showToast('error', Array.isArray(msg) ? msg.join(' | ') : String(msg));
 //     }
-//     setUploading(true); setUploadError(""); setUploadInfo("");
-//     const newProgress: Record<string, number> = {};
-//     setProgressMap({});
-
-//     // ارفع ملفًا ملفًا لتظهر نسبة تقدّم لكل ملف
-//     for (const file of selectedFiles) {
-//       newProgress[file.name] = 0;
-//       setProgressMap((p) => ({ ...p, [file.name]: 0 }));
-
-//       await new Promise<void>((resolve, reject) => {
-//         const xhr = new XMLHttpRequest();
-//         xhr.open("POST", `http://localhost:3000/files/upload/${selectedDocId}`);
-//         xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-//         xhr.upload.onprogress = (evt) => {
-//           if (evt.lengthComputable) {
-//             const percent = Math.round((evt.loaded / evt.total) * 100);
-//             setProgressMap((p) => ({ ...p, [file.name]: percent }));
-//           }
-//         };
-//         xhr.onload = () => {
-//           if (xhr.status >= 200 && xhr.status < 300) resolve();
-//           else reject(new Error(xhr.responseText || "فشل الرفع"));
-//         };
-//         xhr.onerror = () => reject(new Error("تعذر الاتصال بالخادم"));
-//         const form = new FormData();
-//         form.append("file", file);
-//         xhr.send(form);
-//       }).catch((err) => {
-//         setUploadError(`فشل رفع "${file.name}": ${err.message}`);
-//       });
-//     }
-
-//     setUploading(false);
-//     setUploadInfo("تم رفع الملفات وربطها بالمعاملة ✅");
-
-
-//     // ✅ تحديث تفاؤلي للصف المحدد — يحوِّل زر "إرفاق" إلى "مرفق" فورًا
-//     setItems((prev) =>
-//       prev.map((it) =>
-//         it.documentId === selectedDocId ? { ...it, hasFiles: true } : it
-//       )
-//     );
-
-//     await refreshList();
-
-//     // تحديث تفاؤلي احتياطي:
-//     setItems((old) => old.map(r => r.documentId === selectedDocId ? {...r, hasFiles: true} : r));
-
-//     if (showFilesForDocId === selectedDocId) await loadDocFiles(selectedDocId);
-//     // إغلاق تلقائي
-//     setTimeout(() => { setShowUploadModal(false); setSelectedFiles([]); setProgressMap({}); }, 900);
-//   }
-
-//   // حذف ملف
-//   async function handleDelete(fileId: string) {
-//     if (!token) return;
-//     if (!confirm("هل تريد حذف هذا المرفق؟")) return;
-//     const res = await fetch(`http://localhost:3000/files/${fileId}`, {
-//       method: "DELETE",
-//       headers: { Authorization: `Bearer ${token}` },
-//     });
-//     if (!res.ok) { alert("تعذر الحذف"); return; }
-//     setDocFiles((arr) => arr.filter((f) => f.id !== fileId));
-//     await refreshList();
-//   }
-
-//   // بدء تعديل الاسم
-//   function startRename(file: DocFile) {
-//     setRenameEditingId(file.id);
-//     setRenameValue(file.fileNameOriginal);
-//   }
-//   // حفظ الاسم
-//   async function commitRename(fileId: string) {
-//     if (!token) return;
-//     const newName = renameValue.trim();
-//     if (!newName) return;
-//     const res = await fetch(`http://localhost:3000/files/${fileId}`, {
-//       method: "PATCH",
-//       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-//       body: JSON.stringify({ fileNameOriginal: newName }),
-//     });
-//     if (!res.ok) { alert("تعذر إعادة التسمية"); return; }
-//     setDocFiles((arr) => arr.map((f) => (f.id === fileId ? { ...f, fileNameOriginal: newName } : f)));
-//     setRenameEditingId(null);
-//   }
+//   };
 
 //   return (
-//     <div dir="rtl" className="min-h-screen bg-slate-100 text-slate-800 p-6">
-//       <div className="max-w-5xl mx-auto space-y-6">
-//         <div className="flex items-start justify-between">
-//           <div className="text-right">
-//             <h1 className="text-2xl font-semibold text-slate-800">الوارد</h1>
-//             <p className="text-sm text-slate-500">تسجيل كتاب وارد جديد وعرض آخر المعاملات الواردة</p>
-//           </div>
-//           <div className="flex flex-col gap-2 text-left">
-//             <Link to="/dashboard" className="text-xs bg-slate-500 text-white px-3 py-1.5 rounded-lg hover:bg-slate-600">← لوحة التحكم</Link>
-//             <Link to="/departments" className="text-xs bg-slate-700 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800">← إدارات المؤسسة</Link>
-//           </div>
+//     <div className="space-y-6">
+//       <header className="flex items-center justify-between">
+//         <div>
+//           <h1 className="text-2xl font-bold">الوارد</h1>
+//           <p className="text-sm text-gray-500 mt-1">إدارة المعاملات الواردة وعرض آخر التحديثات</p>
 //         </div>
+//         <div className="flex items-center gap-2">
+//           <button
+//             onClick={load}
+//             className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+//           >
+//             تحديث
+//           </button>
+//         </div>
+//       </header>
 
-//         {msgError && <div className="bg-red-100 text-red-700 text-sm p-3 rounded-lg text-right">{msgError}</div>}
-//         {msgInfo && <div className="bg-green-100 text-green-700 text-sm p-3 rounded-lg text-right flex items-start gap-2"><span>✅</span><span>{msgInfo}</span></div>}
+//       {/* بطاقة الإنشاء السريع */}
+//       <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
+//         <h2 className="text-lg font-semibold mb-4">إنشاء وارد سريع</h2>
 
-//         {/* إنشاء وارد */}
-//         <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-xl shadow p-4 text-right space-y-4">
-//           <div className="grid md:grid-cols-2 gap-4">
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">الجهة المرسلة</label>
-//               <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={externalPartyName} onChange={(e) => setExternalPartyName(e.target.value)} placeholder="مثال: وزارة المالية" />
-//             </div>
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">نوع الجهة</label>
-//               <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={externalPartyType} onChange={(e) => setExternalPartyType(e.target.value)} placeholder="وزارة / شركة / سفارة ..." />
-//             </div>
-//           </div>
-//           <div className="grid md:grid-cols-2 gap-4">
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">طريقة الاستلام</label>
-//               <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={deliveryMethod} onChange={(e) => setDeliveryMethod(e.target.value)}>
-//                 <option value="Hand">تسليم باليد</option>
-//                 <option value="OfficialEmail">بريد رسمي</option>
-//                 <option value="Courier">مندوب</option>
-//                 <option value="Fax">فاكس رسمي</option>
-//               </select>
-//             </div>
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">درجة الأهمية</label>
-//               <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={urgencyLevel} onChange={(e) => setUrgencyLevel(e.target.value)}>
-//                 <option value="Normal">عادي</option>
-//                 <option value="Urgent">عاجل ⚠️</option>
-//                 <option value="VeryUrgent">عاجل جدًا 🔥</option>
-//               </select>
-//             </div>
-//           </div>
-//           <div className="grid md:grid-cols-2 gap-4">
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">الإجراء المطلوب</label>
-//               <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={requiredAction} onChange={(e) => setRequiredAction(e.target.value)} placeholder="للعلم / للرد / للدراسة القانونية ..." />
-//             </div>
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">الإدارة المستهدفة</label>
-//               {departments.length === 0 && !loadingList ? (
-//                 <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">لا توجد إدارات نشطة متاحة حاليًا</div>
-//               ) : (
-//                 <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={departmentId ?? ""} onChange={(e) => setDepartmentId(Number(e.target.value))}>
-//                   {departments.map((d) => (<option key={d.id} value={d.id}>{d.name}</option>))}
-//                 </select>
-//               )}
-//             </div>
-//           </div>
+//         <form onSubmit={handleCreate} className="grid grid-cols-1 md:grid-cols-2 gap-4">
 //           <div>
-//             <label className="block text-sm font-medium text-slate-700 mb-1">ملخص / عنوان الخطاب</label>
-//             <textarea className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" rows={2} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="مثال: طلب تزويد بتقارير الربع المالي الأخير..." />
+//             <label className="block text-sm mb-1">الموضوع/عنوان الوثيقة</label>
+//             <input
+//               className="w-full border rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+//               value={documentTitle}
+//               onChange={e => setDocumentTitle(e.target.value)}
+//             />
 //           </div>
+
 //           <div>
-//             <button type="submit" disabled={submitting} className="bg-blue-600 text-white text-sm font-medium py-2 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-//               {submitting ? "جاري التسجيل..." : "تسجيل الوارد"}
+//             <label className="block text-sm mb-1">طريقة التسليم</label>
+//             <select
+//               className="w-full border rounded-xl p-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+//               value={deliveryMethod}
+//               onChange={e => setDeliveryMethod(e.target.value)}
+//             >
+//               <option value="Hand">تسليم باليد</option>
+//               <option value="Mail">بريد رسمي</option>
+//               <option value="Email">بريد إلكتروني</option>
+//               <option value="Courier">مندوب/ساعي</option>
+//               <option value="Fax">فاكس</option>
+//               <option value="ElectronicSystem">عن طريق المنظومة</option>
+//             </select>
+//           </div>
+
+//           <div>
+//             <label className="block text-sm mb-1">القسم المالِك</label>
+//             <input
+//               type="number"
+//               className="w-full border rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+//               value={owningDepartmentId}
+//               onChange={e => setOwningDepartmentId(e.target.value === '' ? '' : Number(e.target.value))}
+//             />
+//           </div>
+
+//           <div>
+//             <label className="block text-sm mb-1">الجهة</label>
+//             <input
+//               className="w-full border rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+//               value={externalPartyName}
+//               onChange={e => setExternalPartyName(e.target.value)}
+//             />
+//           </div>
+
+//           <div className="md:col-span-2">
+//             <button
+//               className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2"
+//             >
+//               إنشاء
 //             </button>
 //           </div>
 //         </form>
+//       </section>
 
-//         {/* جدول الوارد + زر المرفقات */}
-//         <div className="bg-white border border-slate-200 rounded-xl shadow p-4 text-right">
-//           <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-//             <h2 className="text-base font-semibold text-slate-700">آخر المعاملات الواردة</h2>
-//             <div className="flex items-center gap-2 text-xs">
-//               <button onClick={() => setTab("all")} className={`px-3 py-1.5 rounded-lg border text-xs ${tab === "all" ? "bg-slate-800 text-white border-slate-800" : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200"}`}>كل الوارد</button>
-//               {currentUserDeptId != null && (
-//                 <button onClick={() => setTab("dept")} className={`px-3 py-1.5 rounded-lg border text-xs ${tab === "dept" ? "bg-slate-800 text-white border-slate-800" : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200"}`}>وارد إدارتنا</button>
-//               )}
-//             </div>
-//             {loadingList && <span className="text-[11px] text-slate-500">...جاري التحديث</span>}
+//       {/* بطاقة الجدول + الفلاتر */}
+//       <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5 space-y-4">
+//         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+//           <div className="md:col-span-2">
+//             <label className="block text-sm mb-1">بحث برقم/جهة/عنوان</label>
+//             <input
+//               placeholder="ابحث هنا…"
+//               className="w-full border rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+//               value={q}
+//               onChange={e => setQ(e.target.value)}
+//             />
 //           </div>
 
-//           <div className="overflow-x-auto">
-//             <table className="w-full text-sm">
-//               <thead className="text-slate-600 border-b border-slate-200">
-//                 <tr className="text-right">
-//                   <th className="py-2 px-3">الرقم الوارد</th>
-//                   <th className="py-2 px-3">الجهة المرسلة</th>
-//                   <th className="py-2 px-3">{tab === "dept" ? "المكلف / ملاحظات" : "الإدارة الموجه لها"}</th>
-//                   <th className="py-2 px-3">الموضوع</th>
-//                   <th className="py-2 px-3">الأهمية</th>
-//                   <th className="py-2 px-3">تاريخ الاستلام</th>
-//                   <th className="py-2 px-3">المرفقات</th>
-//                 </tr>
-//               </thead>
-//               <tbody>
-//                 {loadingList ? (
-//                   <tr><td colSpan={7} className="text-center text-slate-500 py-6">...جاري تحميل البيانات</td></tr>
-//                 ) : items.length === 0 ? (
-//                   <tr><td colSpan={7} className="text-center text-slate-500 py-6">{tab==="dept"?(currentUserDeptId==null?"حسابك غير مرتبط بإدارة.":"لا توجد معاملات لإدارتك."):"لا توجد معاملات واردة بعد."}</td></tr>
-//                 ) : (
-//                   items.map((rec) => {
-//                     const showFiles = showFilesForDocId === rec.documentId;
-//                     return (
-//                       <FragmentRow
-//                         key={rec.id}
-//                         rec={rec}
-//                         onAttach={() => rec.documentId && openUploadModalForDoc(rec.documentId)}
-//                         onToggleFiles={() => rec.documentId && toggleShowFiles(rec.documentId)}
-//                         showFiles={showFiles}
-//                         files={docFiles}
-//                         loadingFiles={loadingFiles}
-//                         startRename={startRename}
-//                         renameEditingId={renameEditingId}
-//                         renameValue={renameValue}
-//                         setRenameValue={setRenameValue}
-//                         commitRename={commitRename}
-//                         handleDelete={handleDelete}
-//                       />
-//                     );
-//                   })
-//                 )}
-//               </tbody>
-//             </table>
+//           <div>
+//             <label className="block text-sm mb-1">من تاريخ</label>
+//             <input
+//               type="date"
+//               className="w-full border rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+//               value={dateFrom}
+//               onChange={e => setDateFrom(e.target.value)}
+//             />
+//           </div>
+
+//           <div>
+//             <label className="block text-sm mb-1">إلى تاريخ</label>
+//             <input
+//               type="date"
+//               className="w-full border rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+//               value={dateTo}
+//               onChange={e => setDateTo(e.target.value)}
+//             />
 //           </div>
 //         </div>
 
-//         {/* مودال رفع المرفقات - متعدد الملفات */}
-//         {showUploadModal && (
-//           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-//             <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-4 text-right space-y-4">
-//               <div className="flex items-start justify-between">
-//                 <div>
-//                   <h3 className="text-lg font-semibold text-slate-800">إرفاق ملفات للمعاملة</h3>
-//                   <p className="text-xs text-slate-500">يمكن رفع PDF أو صور (يدعم عدة ملفات).</p>
-//                 </div>
-//                 <button className="text-slate-400 hover:text-slate-600 text-lg leading-none" onClick={() => setShowUploadModal(false)}>×</button>
-//               </div>
-//               {uploadError && <div className="bg-red-100 text-red-700 text-xs p-2 rounded-lg">{uploadError}</div>}
-//               {uploadInfo && <div className="bg-green-100 text-green-700 text-xs p-2 rounded-lg">{uploadInfo}</div>}
+//         <div className="flex items-center gap-2">
+//           <button
+//             type="button"
+//             onClick={() => { setQ(''); setDateFrom(''); setDateTo(''); }}
+//             className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50"
+//           >
+//             مسح الفلاتر
+//           </button>
+//           <div className="text-xs text-gray-500">نتائج: {filtered.length}</div>
+//         </div>
 
-//               <form onSubmit={handleUpload} className="space-y-4">
-//                 <div>
-//                   <label className="block text-sm font-medium text-slate-700 mb-1">اختر ملفات</label>
-//                   <input
-//                     type="file"
-//                     multiple
-//                     accept="application/pdf,image/png,image/jpeg,image/jpg,image/webp,image/gif,image/tiff"
-//                     className="block w-full text-sm text-slate-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-slate-800 file:text-white hover:file:bg-slate-900"
-//                     onChange={(e) => setSelectedFiles(e.target.files ? Array.from(e.target.files) : [])}
-//                   />
-//                   {selectedFiles.length > 0 && (
-//                     <ul className="mt-2 text-xs space-y-1">
-//                       {selectedFiles.map((f) => (
-//                         <li key={f.name} className="flex items-center gap-2">
-//                           <span className="truncate">{f.name}</span>
-//                           {progressMap[f.name] != null && (
-//                             <span className="ml-auto w-28 bg-slate-200 rounded">
-//                               <span className="block h-2 rounded bg-slate-700" style={{ width: `${progressMap[f.name]}%` }} />
-//                             </span>
-//                           )}
-//                         </li>
-//                       ))}
-//                     </ul>
-//                   )}
-//                 </div>
-//                 <div className="flex items-center justify-between">
-//                   <button type="submit" disabled={uploading || selectedFiles.length === 0} className="bg-blue-600 text-white text-sm font-medium py-2 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-//                     {uploading ? "جاري الرفع..." : "رفع المرفقات"}
-//                   </button>
-//                   <button type="button" className="text-xs text-slate-600 hover:text-slate-800" onClick={() => setShowUploadModal(false)}>إلغاء</button>
-//                 </div>
-//               </form>
-//             </div>
-//           </div>
-//         )}
-//       </div>
-//     </div>
-//   );
-// }
+//         <div className="overflow-auto rounded-xl border">
+//           <table className="min-w-full text-sm">
+//             <thead>
+//               <tr className="bg-gray-100">
+//                 <th className="text-right p-2">رقم الوارد</th>
+//                 <th className="text-right p-2">التاريخ</th>
+//                 <th className="text-right p-2">الجهة</th>
+//                 <th className="text-right p-2">العنوان</th>
+//                 <th className="text-right p-2">ملفات؟</th>
+//               </tr>
+//             </thead>
+//             <tbody>
+//               {loading && (
+//                 <tr><td colSpan={5} className="p-4 text-center">جاري التحميل...</td></tr>
+//               )}
+//               {!loading && filtered.length === 0 && (
+//                 <tr><td colSpan={5} className="p-4 text-center">لا توجد بيانات</td></tr>
+//               )}
+//               {!loading && filtered.map(r => (
+//                 <tr key={r.id} className="border-t hover:bg-gray-50">
+//                   <td className="p-2 font-mono">{r.incomingNumber}</td>
+//                   <td className="p-2">{new Date(r.receivedDate).toLocaleString('ar-LY', {
+//                     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+//                   })}</td>
+//                   <td className="p-2">{r.externalPartyName}</td>
+//                   <td className="p-2">{r.document?.title ?? '—'}</td>
+//                   <td className="p-2">{r.hasFiles ? '✅' : '—'}</td>
+//                 </tr>
+//               ))}
+//             </tbody>
+//           </table>
+//         </div>
+//       </section>
 
-// function FragmentRow({
-//   rec,
-//   onAttach,
-//   onToggleFiles,
-//   showFiles,
-//   files,
-//   loadingFiles,
-//   startRename,
-//   renameEditingId,
-//   renameValue,
-//   setRenameValue,
-//   commitRename,
-//   handleDelete,
-// }: {
-//   rec: IncomingItem;
-//   onAttach: () => void;
-//   onToggleFiles: () => void;
-//   showFiles: boolean;
-//   files: DocFile[];
-//   loadingFiles: boolean;
-//   startRename: (f: DocFile) => void;
-//   renameEditingId: string | null;
-//   renameValue: string;
-//   setRenameValue: (v: string) => void;
-//   commitRename: (id: string) => Promise<void>;
-//   handleDelete: (id: string) => Promise<void>;
-// }) {
-//   return (
-//     <>
-//       <tr className="border-b border-slate-100">
-//         <td className="py-2 px-3 font-mono text-xs text-blue-700 underline">
-//           <Link to={`/incoming/${rec.id}`}>{rec.incomingNumber}</Link>
-//         </td>
-//         <td className="py-2 px-3">{rec.externalParty?.name || "—"}</td>
-//         <td className="py-2 px-3 text-slate-700">{rec.targetDepartment?.name || rec.owningDepartment?.name || "—"}</td>
-//         <td className="py-2 px-3">{rec.subject || "—"}</td>
-//         <td className="py-2 px-3">{rec.urgencyLevel === "VeryUrgent" ? "عاجل جدًا 🔥" : rec.urgencyLevel === "Urgent" ? "عاجل ⚠️" : "عادي"}</td>
-//         <td className="py-2 px-3">{formatDate(rec.receivedDate)}</td>
-//         <td className="py-2 px-3">
-//           <div className="flex items-center gap-2">
-//             {rec.documentId && (
-//               <>
-//                 <button className="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-lg hover:bg-slate-900" onClick={onAttach}>إرفاق</button>
-//                 <button className="text-xs bg-slate-100 text-slate-800 px-3 py-1.5 rounded-lg border hover:bg-slate-200" onClick={onToggleFiles}>
-//                   {showFiles ? "إخفاء المرفقات" : (rec.hasFiles ? "عرض المرفقات 📎" : "لا يوجد مرفقات")}
-//                 </button>
-//               </>
-//             )}
-//           </div>
-//         </td>
-//       </tr>
-//       {showFiles && (
-//         <tr className="bg-slate-50">
-//           <td colSpan={7} className="py-3 px-4">
-//             {loadingFiles ? (
-//               <div className="text-xs text-slate-600">...جاري تحميل المرفقات</div>
-//             ) : files.length === 0 ? (
-//               <div className="text-xs text-slate-600">لا توجد مرفقات.</div>
-//             ) : (
-//               <ul className="space-y-2">
-//                 {files.map((f) => (
-//                   <li key={f.id} className="flex items-center gap-3">
-//                     {renameEditingId === f.id ? (
-//                       <>
-//                         <input
-//                           className="text-xs border rounded px-2 py-1"
-//                           value={renameValue}
-//                           onChange={(e) => setRenameValue(e.target.value)}
-//                         />
-//                         <button className="text-xs bg-blue-600 text-white px-2 py-1 rounded" onClick={() => commitRename(f.id)}>حفظ</button>
-//                         <button className="text-xs px-2 py-1 rounded border" onClick={() => (window.getSelection()?.removeAllRanges(), location.reload())}>إلغاء</button>
-//                       </>
-//                     ) : (
-//                       <>
-//                         <a className="text-xs text-blue-700 underline truncate" href={f.url} target="_blank" rel="noreferrer">{f.fileNameOriginal}</a>
-//                         <span className="text-[11px] text-slate-500">v{f.versionNumber}</span>
-//                         <span className="text-[11px] text-slate-500">{formatDate(f.uploadedAt)}</span>
-//                         {f.uploadedBy && <span className="text-[11px] text-slate-500">بواسطة: {f.uploadedBy}</span>}
-//                         <button className="text-xs px-2 py-1 rounded border" onClick={() => startRename(f)}>إعادة تسمية</button>
-//                         <button className="text-xs px-2 py-1 rounded border text-red-700" onClick={() => handleDelete(f.id)}>حذف</button>
-//                       </>
-//                     )}
-//                   </li>
-//                 ))}
-//               </ul>
-//             )}
-//           </td>
-//         </tr>
+//       {toast && (
+//         <div
+//           className={`fixed bottom-4 left-4 right-4 md:right-auto md:left-auto md:bottom-6 md:start-6 z-40
+//             rounded-xl px-4 py-3 shadow-lg border
+//             ${toast.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}
+//         >
+//           {toast.msg}
+//         </div>
 //       )}
-//     </>
-//   );
-// }
-
-// export default IncomingPage;
-
-
-
-
-
-// import { useEffect, useState, useCallback } from "react";
-// import { useAuthStore } from "../stores/authStore";
-// import { Link } from "react-router-dom";
-
-// // --- الأنواع (Types) ---
-// type IncomingItem = {
-//   id: string;
-//   incomingNumber: string;
-//   receivedDate: string;
-//   deliveryMethod: string;
-//   urgencyLevel: string | null;
-//   requiredAction: string | null;
-//   externalParty: { name: string | null };
-//   targetDepartment?: { id: number | null; name: string | null } | null;
-//   owningDepartment?: { id: number; name: string } | null;
-//   subject?: string | null;
-//   documentId: string | null;
-//   hasFiles: boolean;
-// };
-
-// type Department = {
-//   id: number;
-//   name: string;
-//   status: string;
-// };
-
-// type User = {
-//   id: number;
-//   fullName: string;
-//   department: { id: number; name: string } | null;
-//   roles: string[];
-// };
-
-// function formatDate(d?: string | Date | null) {
-//   if (!d) return "—";
-//   const dt = new Date(d);
-//   if (Number.isNaN(dt.getTime())) return "—";
-//   return dt.toLocaleString("ar-LY", { hour12: true });
-// }
-
-// function IncomingPage() {
-//   const token = useAuthStore((state) => state.token);
-//   const currentUserDeptId = useAuthStore((state) => state.user?.department?.id ?? null);
-
-//   const [departments, setDepartments] = useState<Department[]>([]);
-//   const [tab, setTab] = useState<"all" | "dept">("all");
-//   const [items, setItems] = useState<IncomingItem[]>([]);
-//   const [loadingList, setLoadingList] = useState(true);
-//   const [departmentId, setDepartmentId] = useState<number | null>(null);
-//   const [externalPartyName, setExternalPartyName] = useState("");
-//   const [externalPartyType, setExternalPartyType] = useState("جهة خارجية");
-//   const [deliveryMethod, setDeliveryMethod] = useState("Hand");
-//   const [urgencyLevel, setUrgencyLevel] = useState("Normal");
-//   const [requiredAction, setRequiredAction] = useState("للعلم");
-//   const [summary, setSummary] = useState("");
-//   const [submitting, setSubmitting] = useState(false);
-//   const [msgError, setMsgError] = useState("");
-//   const [msgInfo, setMsgInfo] = useState("");
-//   const [showUploadModal, setShowUploadModal] = useState(false);
-//   const [uploading, setUploading] = useState(false);
-//   const [uploadError, setUploadError] = useState("");
-//   const [uploadInfo, setUploadInfo] = useState("");
-//   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-//   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-
-//   useEffect(() => {
-//     if (!token) {
-//       setLoadingList(false);
-//       return;
-//     }
-//     const loadPageData = async () => {
-//       setLoadingList(true);
-//       await Promise.all([
-//         (async () => {
-//           try {
-//             const res = await fetch("http://localhost:3000/departments", {
-//               headers: { Authorization: `Bearer ${token}` },
-//             });
-//             if (!res.ok) throw new Error("Failed to fetch departments");
-//             const data = await res.json();
-//             const active = data.filter((d: any) => d.status === "Active");
-//             setDepartments(active);
-//             if (active.length > 0 && departmentId === null) {
-//               setDepartmentId(active[0].id);
-//             }
-//           } catch (err) {
-//             console.error("loadDepartments error:", err);
-//           }
-//         })(),
-//         (async () => {
-//           let url = "http://localhost:3000/incoming";
-//           if (tab === "dept") {
-//             if (!currentUserDeptId) {
-//               setItems([]);
-//               return;
-//             }
-//             url = "http://localhost:3000/incoming/my-dept";
-//           }
-//           try {
-//             const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-//             setItems(res.ok ? await res.json() : []);
-//           } catch (err) {
-//             console.error(`Failed to load incoming for tab: ${tab}`, err);
-//             setItems([]);
-//           }
-//         })(),
-//       ]);
-//       setLoadingList(false);
-//     };
-//     loadPageData();
-//   }, [token, tab, currentUserDeptId, departmentId]);
-
-//   const refreshList = useCallback(async () => {
-//     if (!token) return;
-//     setLoadingList(true);
-//     let url = "http://localhost:3000/incoming";
-//     if (tab === "dept" && currentUserDeptId) {
-//       url = "http://localhost:3000/incoming/my-dept";
-//     } else if (tab === "dept") {
-//       setItems([]); setLoadingList(false); return;
-//     }
-//     try {
-//       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-//       setItems(res.ok ? await res.json() : []);
-//     } catch (e) { setItems([]); } finally { setLoadingList(false); }
-//   }, [token, tab, currentUserDeptId]);
-
-//   // --- إنشاء وارد ---
-//   async function handleSubmit(e: React.FormEvent) {
-//     e.preventDefault();
-//     setMsgError("");
-//     setMsgInfo("");
-
-//     if (!externalPartyName.trim()) { setMsgError("يرجى إدخال اسم الجهة المرسلة."); return; }
-//     if (!summary.trim()) { setMsgError("يرجى إدخال ملخص أو عنوان للخطاب."); return; }
-//     if (!departmentId) { setMsgError("يرجى اختيار الإدارة المستهدفة."); return; }
-//     if (!token) { setMsgError("انتهت الجلسة، يرجى تسجيل الدخول مرة أخرى."); return; }
-
-//     setSubmitting(true);
-//     try {
-//       const res = await fetch("http://localhost:3000/incoming", {
-//         method: "POST",
-//         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-//         body: JSON.stringify({
-//           externalPartyName, externalPartyType, deliveryMethod,
-//           urgencyLevel, requiredAction, summary, departmentId,
-//         }),
-//       });
-
-//       if (!res.ok) {
-//         const errorData = await res.json().catch(() => null);
-//         const msg = errorData?.message
-//           ? (Array.isArray(errorData.message) ? errorData.message.join(", ") : errorData.message)
-//           : `تعذر تسجيل الوارد. رمز الحالة: ${res.status}`;
-//         throw new Error(msg);
-//       }
-
-//       const created = await res.json();
-//       setExternalPartyName("");
-//       setExternalPartyType("جهة خارجية");
-//       setSummary("");
-//       setMsgInfo("تم تسجيل الكتاب الوارد بنجاح ✅");
-
-//       // تمرير ناعم للجدول
-//       document.querySelector("table")?.scrollIntoView({ behavior: "smooth" });
-
-//       await refreshList();
-//       if (created?.document?.id) {
-//         openUploadModalForDoc(created.document.id);
-//       }
-//     } catch (err: any) {
-//       console.error(err);
-//       setMsgError(err.message || "خطأ في الاتصال بالخادم أثناء تسجيل الوارد");
-//     } finally {
-//       setSubmitting(false);
-//     }
-//   }
-
-//   function openUploadModalForDoc(docId: string) {
-//     setUploadError("");
-//     setUploadInfo("");
-//     setSelectedFile(null);
-//     setSelectedDocId(docId);
-//     setShowUploadModal(true);
-//   }
-
-//   // --- رفع المرفق ---
-//   async function handleUpload(e: React.FormEvent) {
-//     e.preventDefault();
-//     if (!token || !selectedDocId || !selectedFile) {
-//       setUploadError("بيانات غير مكتملة للرفع.");
-//       return;
-//     }
-//     setUploading(true);
-//     setUploadError("");
-//     setUploadInfo("");
-//     const formData = new FormData();
-//     formData.append("file", selectedFile);
-//     try {
-//       const res = await fetch(`http://localhost:3000/files/upload/${selectedDocId}`, {
-//         method: "POST",
-//         headers: { Authorization: `Bearer ${token}` },
-//         body: formData,
-//       });
-//       if (!res.ok) {
-//         const errorData = await res.json().catch(() => null);
-//         const msg = errorData?.message
-//           ? (Array.isArray(errorData.message) ? errorData.message.join(", ") : errorData.message)
-//           : "فشل رفع الملف";
-//         throw new Error(msg);
-//       }
-//       await res.json();
-//       setUploadInfo("تم رفع الملف وربطه بالمعاملة ✅");
-//       await refreshList();
-
-//       // إغلاق تلقائي للمودال بعد نجاح الرفع + تصفير الحقول
-//       setTimeout(() => {
-//         setShowUploadModal(false);
-//         setSelectedFile(null);
-//         setSelectedDocId(null);
-//         setUploadInfo("");
-//       }, 800);
-//     } catch (err: any) {
-//       console.error(err);
-//       setUploadError(err.message || "خطأ في الاتصال بالخادم أثناء الرفع");
-//     } finally {
-//       setUploading(false);
-//     }
-//   }
-
-//   return (
-//     <div dir="rtl" className="min-h-screen bg-slate-100 text-slate-800 p-6">
-//       <div className="max-w-5xl mx-auto space-y-6">
-//         <div className="flex items-start justify-between">
-//           <div className="text-right">
-//             <h1 className="text-2xl font-semibold text-slate-800">الوارد</h1>
-//             <p className="text-sm text-slate-500">
-//               تسجيل كتاب وارد جديد وعرض آخر المعاملات الواردة
-//             </p>
-//           </div>
-//           <div className="flex flex-col gap-2 text-left">
-//             <Link to="/dashboard" className="text-xs bg-slate-500 text-white px-3 py-1.5 rounded-lg hover:bg-slate-600">
-//               ← لوحة التحكم
-//             </Link>
-//             <Link to="/departments" className="text-xs bg-slate-700 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800">
-//               ← إدارات المؤسسة
-//             </Link>
-//           </div>
-//         </div>
-
-//         {msgError && <div className="bg-red-100 text-red-700 text-sm p-3 rounded-lg text-right">{msgError}</div>}
-//         {msgInfo && <div className="bg-green-100 text-green-700 text-sm p-3 rounded-lg text-right flex items-start gap-2"><span>✅</span><span>{msgInfo}</span></div>}
-        
-//         <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-xl shadow p-4 text-right space-y-4">
-//           <div className="grid md:grid-cols-2 gap-4">
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">الجهة المرسلة</label>
-//               <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={externalPartyName} onChange={(e) => setExternalPartyName(e.target.value)} placeholder="مثال: وزارة المالية" />
-//             </div>
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">نوع الجهة</label>
-//               <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={externalPartyType} onChange={(e) => setExternalPartyType(e.target.value)} placeholder="وزارة / شركة / سفارة ..." />
-//             </div>
-//           </div>
-//           <div className="grid md:grid-cols-2 gap-4">
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">طريقة الاستلام</label>
-//               <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={deliveryMethod} onChange={(e) => setDeliveryMethod(e.target.value)}>
-//                 <option value="Hand">تسليم باليد</option>
-//                 <option value="OfficialEmail">بريد رسمي</option>
-//                 <option value="Courier">مندوب</option>
-//                 <option value="Fax">فاكس رسمي</option>
-//               </select>
-//             </div>
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">درجة الأهمية</label>
-//               <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={urgencyLevel} onChange={(e) => setUrgencyLevel(e.target.value)}>
-//                 <option value="Normal">عادي</option>
-//                 <option value="Urgent">عاجل ⚠️</option>
-//                 <option value="VeryUrgent">عاجل جدًا 🔥</option>
-//               </select>
-//             </div>
-//           </div>
-//           <div className="grid md:grid-cols-2 gap-4">
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">الإجراء المطلوب</label>
-//               <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={requiredAction} onChange={(e) => setRequiredAction(e.target.value)} placeholder="للعلم / للرد / للدراسة القانونية ..." />
-//             </div>
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">الإدارة المستهدفة</label>
-//               {departments.length === 0 && !loadingList ? (
-//                 <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">لا توجد إدارات نشطة متاحة حاليًا</div>
-//               ) : (
-//                 <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={departmentId ?? ""} onChange={(e) => setDepartmentId(Number(e.target.value))}>
-//                   {departments.map((d) => (<option key={d.id} value={d.id}>{d.name}</option>))}
-//                 </select>
-//               )}
-//             </div>
-//           </div>
-//           <div>
-//             <label className="block text-sm font-medium text-slate-700 mb-1">ملخص / عنوان الخطاب</label>
-//             <textarea className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" rows={2} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="مثال: طلب تزويد بتقارير الربع المالي الأخير..." />
-//           </div>
-//           <div>
-//             <button type="submit" disabled={submitting} className="bg-blue-600 text-white text-sm font-medium py-2 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-//               {submitting ? "جاري التسجيل..." : "تسجيل الوارد"}
-//             </button>
-//           </div>
-//         </form>
-
-//         <div className="bg-white border border-slate-200 rounded-xl shadow p-4 text-right">
-//           <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-//             <h2 className="text-base font-semibold text-slate-700">آخر المعاملات الواردة</h2>
-//             <div className="flex items-center gap-2 text-xs">
-//               <button onClick={() => setTab("all")} className={`px-3 py-1.5 rounded-lg border text-xs ${tab === "all" ? "bg-slate-800 text-white border-slate-800" : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200"}`}>
-//                 كل الوارد
-//               </button>
-//               {currentUserDeptId != null && (
-//                 <button onClick={() => setTab("dept")} className={`px-3 py-1.5 rounded-lg border text-xs ${tab === "dept" ? "bg-slate-800 text-white border-slate-800" : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200"}`}>
-//                   وارد إدارتنا
-//                 </button>
-//               )}
-//             </div>
-//             {loadingList && <span className="text-[11px] text-slate-500">...جاري التحديث</span>}
-//           </div>
-//           <div className="overflow-x-auto">
-//             <table className="w-full text-sm">
-//               <thead className="text-slate-600 border-b border-slate-200">
-//                 <tr className="text-right">
-//                   <th className="py-2 px-3">الرقم الوارد</th>
-//                   <th className="py-2 px-3">الجهة المرسلة</th>
-//                   <th className="py-2 px-3">{tab === "dept" ? "المكلف / ملاحظات" : "الإدارة الموجه لها"}</th>
-//                   <th className="py-2 px-3">الموضوع</th>
-//                   <th className="py-2 px-3">الأهمية</th>
-//                   <th className="py-2 px-3">تاريخ الاستلام</th>
-//                   <th className="py-2 px-3">المرفق</th>
-//                 </tr>
-//               </thead>
-//               <tbody>
-//                 {loadingList ? (
-//                   <tr><td colSpan={7} className="text-center text-slate-500 py-6 text-sm">...جاري تحميل البيانات</td></tr>
-//                 ) : items.length === 0 ? (
-//                   <tr>
-//                     <td colSpan={7} className="text-center text-slate-500 py-6 text-sm">
-//                       {tab === "dept" ? (currentUserDeptId == null ? "حسابك غير مرتبط بإدارة محددة." : "لا توجد معاملات واردة مسندة لإدارتك.") : "لا توجد معاملات واردة بعد."}
-//                     </td>
-//                   </tr>
-//                 ) : (
-//                   items.map((rec) => (
-//                     <tr key={rec.id} className="border-b border-slate-100 last:border-none">
-//                       <td className="py-2 px-3 font-mono text-xs text-blue-700 underline"><Link to={`/incoming/${rec.id}`}>{rec.incomingNumber}</Link></td>
-//                       <td className="py-2 px-3">{rec.externalParty?.name || "—"}</td>
-//                       <td className="py-2 px-3 text-slate-700">{rec.targetDepartment?.name || rec.owningDepartment?.name || "—"}</td>
-//                       <td className="py-2 px-3">{rec.subject || "—"}</td>
-//                       <td className="py-2 px-3">{rec.urgencyLevel === "VeryUrgent" ? "عاجل جدًا 🔥" : rec.urgencyLevel === "Urgent" ? "عاجل ⚠️" : "عادي"}</td>
-//                       <td className="py-2 px-3">{formatDate(rec.receivedDate)}</td>
-//                       <td className="py-2 px-3">
-//                         {rec.hasFiles ? (
-//                           <span className="inline-flex items-center gap-1 text-slate-700 bg-slate-200 text-xs font-medium px-2 py-1 rounded"><span>📎</span><span>مرفق</span></span>
-//                         ) : rec.documentId ? (
-//                           <button className="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-lg hover:bg-slate-900" onClick={() => openUploadModalForDoc(rec.documentId as string)}>إرفاق</button>
-//                         ) : ("—")}
-//                       </td>
-//                     </tr>
-//                   ))
-//                 )}
-//               </tbody>
-//             </table>
-//           </div>
-//         </div>
-
-//         {showUploadModal && (
-//           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-//             <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-4 text-right space-y-4">
-//               <div className="flex items-start justify-between">
-//                 <div>
-//                   <h3 className="text-lg font-semibold text-slate-800">إرفاق ملف للمعاملة</h3>
-//                   <p className="text-xs text-slate-500">يمكن رفع PDF أو صورة مسح ضوئي.</p>
-//                 </div>
-//                 <button className="text-slate-400 hover:text-slate-600 text-lg leading-none" onClick={() => { setShowUploadModal(false); }}>
-//                   ×
-//                 </button>
-//               </div>
-
-//               {uploadError && <div className="bg-red-100 text-red-700 text-xs p-2 rounded-lg">{uploadError}</div>}
-//               {uploadInfo && <div className="bg-green-100 text-green-700 text-xs p-2 rounded-lg">{uploadInfo}</div>}
-
-//               <form onSubmit={handleUpload} className="space-y-4">
-//                 <div>
-//                   <label className="block text-sm font-medium text-slate-700 mb-1">اختر ملف</label>
-//                   <input
-//                     type="file"
-//                     accept="application/pdf,image/png,image/jpeg,image/jpg,image/webp,image/gif,image/tiff"
-//                     className="block w-full text-sm text-slate-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-slate-800 file:text-white hover:file:bg-slate-900"
-//                     onChange={(e) => {
-//                       const f = e.target.files?.[0] ?? null;
-//                       setSelectedFile(f);
-//                       setUploadError("");
-//                       setUploadInfo(f ? `سيتم رفع: ${f.name}` : "");
-//                     }}
-//                   />
-//                 </div>
-
-//                 <div className="flex items-center justify-between">
-//                   <button
-//                     type="submit"
-//                     disabled={uploading || !selectedFile}
-//                     className="bg-blue-600 text-white text-sm font-medium py-2 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-//                   >
-//                     {uploading ? "جاري الرفع..." : "رفع المرفق"}
-//                   </button>
-//                   <button
-//                     type="button"
-//                     className="text-xs text-slate-600 hover:text-slate-800"
-//                     onClick={() => { setShowUploadModal(false); }}
-//                   >
-//                     إلغاء
-//                   </button>
-//                 </div>
-//               </form>
-//             </div>
-//           </div>
-//         )}
-//       </div>
 //     </div>
 //   );
 // }
-
-// export default IncomingPage;
-
-
-
-
-
-
-
-// import { useEffect, useState, useCallback } from "react";
-// import { useAuthStore } from "../stores/authStore";
-// import { Link } from "react-router-dom";
-
-
-// // --- الأنواع (Types) ---
-// type IncomingItem = {
-//   id: string;
-//   incomingNumber: string;
-//   receivedDate: string;
-//   deliveryMethod: string;
-//   urgencyLevel: string | null;
-//   requiredAction: string | null;
-//   externalParty: { name: string | null };
-//   targetDepartment?: { id: number | null; name: string | null } | null;
-//   owningDepartment?: { id: number; name: string } | null;
-//   subject?: string | null;
-//   documentId: string | null;
-//   hasFiles: boolean;
-// };
-
-// type Department = {
-//   id: number;
-//   name: string;
-//   status: string;
-// };
-
-// type User = {
-//   id: number;
-//   fullName: string;
-//   department: { id: number; name: string } | null;
-//   roles: string[];
-// };
-
-// function formatDate(d?: string | Date | null) {
-//   if (!d) return "—";
-//   const dt = new Date(d);
-//   if (Number.isNaN(dt.getTime())) return "—";
-//   return dt.toLocaleString("ar-LY", { hour12: true });
-// }
-
-// function IncomingPage() {
-//   const token = useAuthStore((state) => state.token);
-//   const currentUserDeptId = useAuthStore((state) => state.user?.department?.id ?? null);
-
-//   const [departments, setDepartments] = useState<Department[]>([]);
-//   const [tab, setTab] = useState<"all" | "dept">("all");
-//   const [items, setItems] = useState<IncomingItem[]>([]);
-//   const [loadingList, setLoadingList] = useState(true);
-//   const [departmentId, setDepartmentId] = useState<number | null>(null);
-//   const [externalPartyName, setExternalPartyName] = useState("");
-//   const [externalPartyType, setExternalPartyType] = useState("جهة خارجية");
-//   const [deliveryMethod, setDeliveryMethod] = useState("Hand");
-//   const [urgencyLevel, setUrgencyLevel] = useState("Normal");
-//   const [requiredAction, setRequiredAction] = useState("للعلم");
-//   const [summary, setSummary] = useState("");
-//   const [submitting, setSubmitting] = useState(false);
-//   const [msgError, setMsgError] = useState("");
-//   const [msgInfo, setMsgInfo] = useState("");
-//   const [showUploadModal, setShowUploadModal] = useState(false);
-//   const [uploading, setUploading] = useState(false);
-//   const [uploadError, setUploadError] = useState("");
-//   const [uploadInfo, setUploadInfo] = useState("");
-//   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-//   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-
-//   useEffect(() => {
-//     if (!token) {
-//       setLoadingList(false);
-//       return;
-//     }
-//     const loadPageData = async () => {
-//       setLoadingList(true);
-//       await Promise.all([
-//         (async () => {
-//           try {
-//             const res = await fetch("http://localhost:3000/departments", {
-//               headers: { Authorization: `Bearer ${token}` },
-//             });
-//             if (!res.ok) throw new Error("Failed to fetch departments");
-//             const data = await res.json();
-//             const active = data.filter((d: any) => d.status === "Active");
-//             setDepartments(active);
-//             if (active.length > 0 && departmentId === null) {
-//               setDepartmentId(active[0].id);
-//             }
-//           } catch (err) {
-//             console.error("loadDepartments error:", err);
-//           }
-//         })(),
-//         (async () => {
-//           let url = "http://localhost:3000/incoming";
-//           if (tab === "dept") {
-//             if (!currentUserDeptId) {
-//               setItems([]);
-//               return;
-//             }
-//             url = "http://localhost:3000/incoming/my-dept";
-//           }
-//           try {
-//             const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-//             setItems(res.ok ? await res.json() : []);
-//           } catch (err) {
-//             console.error(`Failed to load incoming for tab: ${tab}`, err);
-//             setItems([]);
-//           }
-//         })(),
-//       ]);
-//       setLoadingList(false);
-//     };
-//     loadPageData();
-//   }, [token, tab, currentUserDeptId, departmentId]);
-
-//   const refreshList = useCallback(async () => {
-//     if (!token) return;
-//     setLoadingList(true);
-//     let url = "http://localhost:3000/incoming";
-//     if (tab === "dept" && currentUserDeptId) {
-//       url = "http://localhost:3000/incoming/my-dept";
-//     } else if (tab === "dept") {
-//       setItems([]); setLoadingList(false); return;
-//     }
-//     try {
-//       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-//       setItems(res.ok ? await res.json() : []);
-//     } catch (e) { setItems([]); } finally { setLoadingList(false); }
-//   }, [token, tab, currentUserDeptId]);
-
-//   // ✨ --- تعديل دالة الإرسال --- ✨
-//   async function handleSubmit(e: React.FormEvent) {
-//     e.preventDefault();
-//     setMsgError("");
-//     setMsgInfo("");
-
-//     // 1. ✅ إعادة التحقق من المدخلات في الواجهة الأمامية
-//     if (!externalPartyName.trim()) {
-//       setMsgError("يرجى إدخال اسم الجهة المرسلة.");
-//       return;
-//     }
-//     if (!summary.trim()) {
-//       setMsgError("يرجى إدخال ملخص أو عنوان للخطاب.");
-//       return;
-//     }
-//     if (!departmentId) {
-//       setMsgError("يرجى اختيار الإدارة المستهدفة.");
-//       return;
-//     }
-//     if (!token) {
-//       setMsgError("انتهت الجلسة، يرجى تسجيل الدخول مرة أخرى.");
-//       return;
-//     }
-
-//     setSubmitting(true);
-//     try {
-//       const res = await fetch("http://localhost:3000/incoming", {
-//         method: "POST",
-//         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-//         body: JSON.stringify({
-//           externalPartyName, externalPartyType, deliveryMethod,
-//           urgencyLevel, requiredAction, summary, departmentId,
-//         }),
-//       });
-
-//       // 2. ✅ تحسين معالجة أخطاء الخادم
-//       if (!res.ok) {
-//         const errorData = await res.json().catch(() => null);
-//         if (errorData && Array.isArray(errorData.message)) {
-//           // عرض رسائل التحقق من الصحة القادمة من NestJS
-//           throw new Error(errorData.message.join(", "));
-//         }
-//         throw new Error(`تعذر تسجيل الوارد. رمز الحالة: ${res.status}`);
-//       }
-
-//       const created = await res.json();
-//       setExternalPartyName("");
-//       setExternalPartyType("جهة خارجية");
-//       setSummary("");
-//       setMsgInfo("تم تسجيل الكتاب الوارد بنجاح ✅");
-//       await refreshList();
-//       if (created?.document?.id) {
-//         openUploadModalForDoc(created.document.id);
-//       }
-//     } catch (err: any) {
-//       console.error(err);
-//       setMsgError(err.message || "خطأ في الاتصال بالخادم أثناء تسجيل الوارد");
-//     } finally {
-//       setSubmitting(false);
-//     }
-//   }
-
-//   function openUploadModalForDoc(docId: string) {
-//     setUploadError("");
-//     setUploadInfo("");
-//     setSelectedFile(null);
-//     setSelectedDocId(docId);
-//     setShowUploadModal(true);
-//   }
-
-//   async function handleUpload(e: React.FormEvent) {
-//     e.preventDefault();
-//     if (!token || !selectedDocId || !selectedFile) {
-//       setUploadError("بيانات غير مكتملة للرفع.");
-//       return;
-//     }
-//     setUploading(true);
-//     setUploadError("");
-//     setUploadInfo("");
-//     const formData = new FormData();
-//     formData.append("file", selectedFile);
-//     try {
-//       const res = await fetch(`http://localhost:3000/files/upload/${selectedDocId}`, {
-//         method: "POST",
-//         headers: { Authorization: `Bearer ${token}` },
-//         body: formData,
-//       });
-//       if (!res.ok) throw new Error("فشل رفع الملف");
-//       await res.json();
-//       setUploadInfo("تم رفع الملف وربطه بالمعاملة ✅");
-//       await refreshList();
-//     } catch (err) {
-//       console.error(err);
-//       setUploadError("خطأ في الاتصال بالخادم أثناء الرفع");
-//     } finally {
-//       setUploading(false);
-//     }
-//   }
-
-//   return (
-//     <div dir="rtl" className="min-h-screen bg-slate-100 text-slate-800 p-6">
-//       <div className="max-w-5xl mx-auto space-y-6">
-//         <div className="flex items-start justify-between">
-//           <div className="text-right">
-//             <h1 className="text-2xl font-semibold text-slate-800">الوارد</h1>
-//             <p className="text-sm text-slate-500">
-//               تسجيل كتاب وارد جديد وعرض آخر المعاملات الواردة
-//             </p>
-//           </div>
-//           <div className="flex flex-col gap-2 text-left">
-//             <Link to="/dashboard" className="text-xs bg-slate-500 text-white px-3 py-1.5 rounded-lg hover:bg-slate-600">
-//               ← لوحة التحكم
-//             </Link>
-//             <Link to="/departments" className="text-xs bg-slate-700 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800">
-//               ← إدارات المؤسسة
-//             </Link>
-//           </div>
-//         </div>
-
-//         {msgError && <div className="bg-red-100 text-red-700 text-sm p-3 rounded-lg text-right">{msgError}</div>}
-//         {msgInfo && <div className="bg-green-100 text-green-700 text-sm p-3 rounded-lg text-right flex items-start gap-2"><span>✅</span><span>{msgInfo}</span></div>}
-        
-//         <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-xl shadow p-4 text-right space-y-4">
-//           <div className="grid md:grid-cols-2 gap-4">
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">الجهة المرسلة</label>
-//               <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={externalPartyName} onChange={(e) => setExternalPartyName(e.target.value)} placeholder="مثال: وزارة المالية" />
-//             </div>
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">نوع الجهة</label>
-//               <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={externalPartyType} onChange={(e) => setExternalPartyType(e.target.value)} placeholder="وزارة / شركة / سفارة ..." />
-//             </div>
-//           </div>
-//           <div className="grid md:grid-cols-2 gap-4">
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">طريقة الاستلام</label>
-//               <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={deliveryMethod} onChange={(e) => setDeliveryMethod(e.target.value)}>
-//                 <option value="Hand">تسليم باليد</option>
-//                 <option value="OfficialEmail">بريد رسمي</option>
-//                 <option value="Courier">مندوب</option>
-//                 <option value="Fax">فاكس رسمي</option>
-//               </select>
-//             </div>
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">درجة الأهمية</label>
-//               <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={urgencyLevel} onChange={(e) => setUrgencyLevel(e.target.value)}>
-//                 <option value="Normal">عادي</option>
-//                 <option value="Urgent">عاجل ⚠️</option>
-//                 <option value="VeryUrgent">عاجل جدًا 🔥</option>
-//               </select>
-//             </div>
-//           </div>
-//           <div className="grid md:grid-cols-2 gap-4">
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">الإجراء المطلوب</label>
-//               <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={requiredAction} onChange={(e) => setRequiredAction(e.target.value)} placeholder="للعلم / للرد / للدراسة القانونية ..." />
-//             </div>
-//             <div>
-//               <label className="block text-sm font-medium text-slate-700 mb-1">الإدارة المستهدفة</label>
-//               {departments.length === 0 && !loadingList ? (
-//                 <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">لا توجد إدارات نشطة متاحة حاليًا</div>
-//               ) : (
-//                 <select className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={departmentId ?? ""} onChange={(e) => setDepartmentId(Number(e.target.value))}>
-//                   {departments.map((d) => (<option key={d.id} value={d.id}>{d.name}</option>))}
-//                 </select>
-//               )}
-//             </div>
-//           </div>
-//           <div>
-//             <label className="block text-sm font-medium text-slate-700 mb-1">ملخص / عنوان الخطاب</label>
-//             <textarea className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" rows={2} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="مثال: طلب تزويد بتقارير الربع المالي الأخير..." />
-//           </div>
-//           <div>
-//             <button type="submit" disabled={submitting} className="bg-blue-600 text-white text-sm font-medium py-2 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-//               {submitting ? "جاري التسجيل..." : "تسجيل الوارد"}
-//             </button>
-//           </div>
-//         </form>
-
-//         <div className="bg-white border border-slate-200 rounded-xl shadow p-4 text-right">
-//           <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-//             <h2 className="text-base font-semibold text-slate-700">آخر المعاملات الواردة</h2>
-//             <div className="flex items-center gap-2 text-xs">
-//               <button onClick={() => setTab("all")} className={`px-3 py-1.5 rounded-lg border text-xs ${tab === "all" ? "bg-slate-800 text-white border-slate-800" : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200"}`}>
-//                 كل الوارد
-//               </button>
-//               {currentUserDeptId != null && (
-//                 <button onClick={() => setTab("dept")} className={`px-3 py-1.5 rounded-lg border text-xs ${tab === "dept" ? "bg-slate-800 text-white border-slate-800" : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200"}`}>
-//                   وارد إدارتنا
-//                 </button>
-//               )}
-//             </div>
-//             {loadingList && <span className="text-[11px] text-slate-500">...جاري التحديث</span>}
-//           </div>
-//           <div className="overflow-x-auto">
-//             <table className="w-full text-sm">
-//               <thead className="text-slate-600 border-b border-slate-200">
-//                 <tr className="text-right">
-//                   <th className="py-2 px-3">الرقم الوارد</th>
-//                   <th className="py-2 px-3">الجهة المرسلة</th>
-//                   <th className="py-2 px-3">{tab === "dept" ? "المكلف / ملاحظات" : "الإدارة الموجه لها"}</th>
-//                   <th className="py-2 px-3">الموضوع</th>
-//                   <th className="py-2 px-3">الأهمية</th>
-//                   <th className="py-2 px-3">تاريخ الاستلام</th>
-//                   <th className="py-2 px-3">المرفق</th>
-//                 </tr>
-//               </thead>
-//               <tbody>
-//                 {loadingList ? (
-//                   <tr><td colSpan={7} className="text-center text-slate-500 py-6 text-sm">...جاري تحميل البيانات</td></tr>
-//                 ) : items.length === 0 ? (
-//                   <tr>
-//                     <td colSpan={7} className="text-center text-slate-500 py-6 text-sm">
-//                       {tab === "dept" ? (currentUserDeptId == null ? "حسابك غير مرتبط بإدارة محددة." : "لا توجد معاملات واردة مسندة لإدارتك.") : "لا توجد معاملات واردة بعد."}
-//                     </td>
-//                   </tr>
-//                 ) : (
-//                   items.map((rec) => (
-//                     <tr key={rec.id} className="border-b border-slate-100 last:border-none">
-//                       <td className="py-2 px-3 font-mono text-xs text-blue-700 underline"><Link to={`/incoming/${rec.id}`}>{rec.incomingNumber}</Link></td>
-//                       <td className="py-2 px-3">{rec.externalParty?.name || "—"}</td>
-//                       <td className="py-2 px-3 text-slate-700">{rec.targetDepartment?.name || rec.owningDepartment?.name || "—"}</td>
-//                       <td className="py-2 px-3">{rec.subject || "—"}</td>
-//                       <td className="py-2 px-3">{rec.urgencyLevel === "VeryUrgent" ? "عاجل جدًا 🔥" : rec.urgencyLevel === "Urgent" ? "عاجل ⚠️" : "عادي"}</td>
-//                       <td className="py-2 px-3">{formatDate(rec.receivedDate)}</td>
-//                       <td className="py-2 px-3">
-//                         {rec.hasFiles ? (
-//                           <span className="inline-flex items-center gap-1 text-slate-700 bg-slate-200 text-xs font-medium px-2 py-1 rounded"><span>📎</span><span>مرفق</span></span>
-//                         ) : rec.documentId ? (
-//                           <button className="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-lg hover:bg-slate-900" onClick={() => openUploadModalForDoc(rec.documentId as string)}>إرفاق</button>
-//                         ) : ("—")}
-//                       </td>
-//                     </tr>
-//                   ))
-//                 )}
-//               </tbody>
-//             </table>
-//           </div>
-//         </div>
-
-//         {showUploadModal && (
-//           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-//             <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-4 text-right space-y-4">
-//               <div className="flex items-start justify-between">
-//                 <div>
-//                   <h3 className="text-lg font-semibold text-slate-800">إرفاق ملف للمعاملة</h3>
-//                   <p className="text-xs text-slate-500">يمكن رفع PDF أو صورة مسح ضوئي.</p>
-//                 </div>
-//                 <button className="text-slate-400 hover:text-slate-600 text-lg leading-none" onClick={() => { setShowUploadModal(false); }}>×</button>
-//               </div>
-//               {uploadError && <div className="bg-red-100 text-red-700 text-xs p-2 rounded-lg">{uploadError}</div>}
-//               {uploadInfo && <div className="bg-green-100 text-green-700 text-xs p-2 rounded-lg">{uploadInfo}</div>}
-//               <form onSubmit={handleUpload} className="space-y-4">
-//                 <div>
-//                   <label className="block text-sm font-medium text-slate-700 mb-1">اختر ملف</label>
-//                   <input type="file" className="block w-full text-sm text-slate-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-slate-800 file:text-white hover:file:bg-slate-900" onChange={(e) => { setSelectedFile(e.target.files?.[0] ?? null); }} />
-//                 </div>
-//                 <div className="flex items-center justify-between">
-//                   <button type="submit" disabled={uploading} className="bg-blue-600 text-white text-sm font-medium py-2 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-//                     {uploading ? "جاري الرفع..." : "رفع المرفق"}
-//                   </button>
-//                   <button type="button" className="text-xs text-slate-600 hover:text-slate-800" onClick={() => { setShowUploadModal(false); }}>
-//                     إلغاء
-//                   </button>
-//                 </div>
-//               </form>
-//             </div>
-//           </div>
-//         )}
-//       </div>
-//     </div>
-//   );
-// }
-
-// export default IncomingPage;
-
 

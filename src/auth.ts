@@ -12,6 +12,12 @@ export function getToken(): string | null {
   return null;
 }
 
+/** ترويسة المصادقة الموحّدة (اختيارية لو كنت تعتمد على interceptor) */
+export function authHeader(token?: string) {
+  const t = token ?? getToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
 /**
  * تهيئة المصادقة عند بدء التطبيق:
  * - تحميل التوكن من localStorage (إن وجد)
@@ -32,8 +38,10 @@ export async function initializeAuth(): Promise<void> {
   // ضَع التوكن في Zustand حتى قبل جلب /users/me
   useAuthStore.getState().setToken(token);
 
+  const baseURL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
+
   try {
-    const res = await fetch("http://localhost:3000/users/me", {
+    const res = await fetch(`${baseURL}/users/me`, {
       headers: { Authorization: `Bearer ${token}` },
     });
 
@@ -49,6 +57,61 @@ export async function initializeAuth(): Promise<void> {
     // في حالة شبكة/سيرفر؛ على الأقل خلّي التوكن موجود لحين نجاح أول طلب لاحق
   }
 }
+
+
+
+
+// // src/auth.ts
+// import { useAuthStore } from "./stores/authStore";
+
+// export function getToken(): string | null {
+//   const zToken = useAuthStore.getState().token;
+//   if (zToken) return zToken;
+
+//   if (typeof window !== "undefined") {
+//     const ls = localStorage.getItem("token");
+//     return ls ?? null;
+//   }
+//   return null;
+// }
+
+// /**
+//  * تهيئة المصادقة عند بدء التطبيق:
+//  * - تحميل التوكن من localStorage (إن وجد)
+//  * - وضعه في Zustand
+//  * - محاولة جلب /users/me لتهيئة بيانات المستخدم (اختياري)
+//  * ملاحظة: نستخدم fetch هنا لتجنّب circular import مع apiClient.
+//  */
+// export async function initializeAuth(): Promise<void> {
+//   if (typeof window === "undefined") return;
+
+//   const token = localStorage.getItem("token");
+//   if (!token) {
+//     // تأكد من تفريغ الحالة لو ما فيش توكن
+//     useAuthStore.getState().logout();
+//     return;
+//   }
+
+//   // ضَع التوكن في Zustand حتى قبل جلب /users/me
+//   useAuthStore.getState().setToken(token);
+
+//   try {
+//     const res = await fetch("http://localhost:3000/users/me", {
+//       headers: { Authorization: `Bearer ${token}` },
+//     });
+
+//     if (!res.ok) {
+//       // توكن غير صالح/منتهي
+//       useAuthStore.getState().logout();
+//       return;
+//     }
+
+//     const me = await res.json();
+//     useAuthStore.getState().setUser(me);
+//   } catch {
+//     // في حالة شبكة/سيرفر؛ على الأقل خلّي التوكن موجود لحين نجاح أول طلب لاحق
+//   }
+// }
 
 
 

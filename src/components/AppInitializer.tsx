@@ -1,25 +1,19 @@
 // src/components/AppInitializer.tsx
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useAuthStore } from "../stores/authStore";
 
 const AppInitializer = ({ children }: { children: React.ReactNode }) => {
-  const [loading, setLoading] = useState(true);
+  // ✅ قراءة الحالة والدالة مباشرة من الـ store
+  const isInitializing = useAuthStore((state) => state.isInitializing);
   const initializeAuth = useAuthStore((state) => state.initializeAuth);
 
+  // ✅ هذا الـ useEffect سيشتغل مرة واحدة فقط عند بدء التطبيق
   useEffect(() => {
-    const initializeApp = async () => {
-      try {
-        await initializeAuth();
-      } catch (error) {
-        console.error("Initialization failed", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    initializeApp();
-  }, [initializeAuth]);
+    initializeAuth();
+  }, [initializeAuth]); // الاعتمادية تضمن عدم تشغيله بشكل متكرر
 
-  if (loading) {
+  // ✅ الاعتماد على حالة الـ store لعرض شاشة التحميل
+  if (isInitializing) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-100 text-slate-600" dir="rtl">
         ...جاري تهيئة التطبيق
@@ -27,10 +21,47 @@ const AppInitializer = ({ children }: { children: React.ReactNode }) => {
     );
   }
 
+  // ✅ عندما تصبح isInitializing = false، يتم عرض بقية التطبيق
   return <>{children}</>;
 };
 
 export default AppInitializer;
+
+
+
+// // src/components/AppInitializer.tsx
+// import { useEffect, useState } from "react";
+// import { useAuthStore } from "../stores/authStore";
+
+// const AppInitializer = ({ children }: { children: React.ReactNode }) => {
+//   const [loading, setLoading] = useState(true);
+//   const initializeAuth = useAuthStore((state) => state.initializeAuth);
+
+//   useEffect(() => {
+//     const initializeApp = async () => {
+//       try {
+//         await initializeAuth();
+//       } catch (error) {
+//         console.error("Initialization failed", error);
+//       } finally {
+//         setLoading(false);
+//       }
+//     };
+//     initializeApp();
+//   }, [initializeAuth]);
+
+//   if (loading) {
+//     return (
+//       <div className="flex items-center justify-center min-h-screen bg-slate-100 text-slate-600" dir="rtl">
+//         ...جاري تهيئة التطبيق
+//       </div>
+//     );
+//   }
+
+//   return <>{children}</>;
+// };
+
+// export default AppInitializer;
 
 
 
