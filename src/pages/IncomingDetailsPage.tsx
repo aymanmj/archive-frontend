@@ -1,15 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, Suspense } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import api from '../api/apiClient';
-import FileUpload from '../components/files/FileUpload';
+import type { PreviewFile } from '../components/files/types';
+
+// تحميل كسول لمودال المعاينة
+const FilePreviewModal = React.lazy(() => import('../components/files/FilePreviewModal'));
 
 type DocFile = {
   id: string | number;
   fileNameOriginal: string;
-  fileUrl?: string;
   fileSizeBytes?: number;
   uploadedAt?: string;
-  versionNumber?: number;
+  fileUrl?: string; // سنملؤها من API إن وُجد
 };
 
 type DistributionRow = {
@@ -68,45 +70,44 @@ export default function IncomingDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
+  // 👇 حالتا المعاينة (اللتان حذفتهما) — عادتا الآن بشكل آمن
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoading(true); setErr(null);
+      const candidates = tryPaths(id!);
+      for (const path of candidates) {
+        try {
+          const res = await api.get<IncomingDetails>(path);
+          if (mounted) { setData(res.data); setLoading(false); }
+          return;
+        } catch {
+          // جرّب التالي
+        }
+      }
+      if (mounted) {
+        setErr('لم يتم العثور على تفاصيل هذا الوارد.');
+        setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [id]);
+
   const hasFiles = useMemo(() => (data?.files?.length ?? 0) > 0, [data]);
 
-  const load = async () => {
-    setLoading(true); setErr(null);
-    let detail: IncomingDetails | null = null;
-
-    for (const path of tryPaths(id!)) {
-      try {
-        const res = await api.get<IncomingDetails>(path);
-        detail = res.data;
-        break;
-      } catch {}
-    }
-    if (!detail) {
-      setErr('لم يتم العثور على تفاصيل هذا الوارد.');
-      setLoading(false);
-      return;
-    }
-
-    // حمّل الملفات إن وُجد documentId
-    try {
-      if (detail.document?.id) {
-        const resFiles = await api.get<DocFile[]>(`/documents/${detail.document.id}/files`);
-        detail = { ...detail, files: resFiles.data || [] };
-      }
-    } catch {}
-
-    setData(detail);
-    setLoading(false);
-  };
-
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
-
-  const refreshFiles = async () => {
-    if (!data?.document?.id) return;
-    try {
-      const resFiles = await api.get<DocFile[]>(`/documents/${data.document.id}/files`);
-      setData((old) => old ? ({ ...old, files: resFiles.data || [] }) : old);
-    } catch {}
+  const onOpenPreview = (f: DocFile) => {
+    const pf: PreviewFile = {
+      id: f.id,
+      fileNameOriginal: f.fileNameOriginal,
+      fileSizeBytes: f.fileSizeBytes,
+      uploadedAt: f.uploadedAt,
+      fileUrl: f.fileUrl, // لو API يرجع /files/<relative>
+    };
+    setPreviewFile(pf);
+    setPreviewOpen(true);
   };
 
   return (
@@ -183,21 +184,9 @@ export default function IncomingDetailsPage() {
             )}
           </section>
 
-          {/* الرفع + الملفات */}
-          <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">الملفات</h2>
-              {data.document?.id && (
-                <FileUpload
-                  documentId={data.document.id}
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.tif,.tiff"
-                  maxSizeMB={50}
-                  buttonLabel="رفع ملف"
-                  onUploaded={refreshFiles}
-                />
-              )}
-            </div>
-
+          {/* الملفات */}
+          <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
+            <h2 className="text-lg font-semibold mb-3">الملفات</h2>
             {hasFiles ? (
               <div className="overflow-auto rounded-xl border">
                 <table className="min-w-full text-sm">
@@ -206,29 +195,31 @@ export default function IncomingDetailsPage() {
                       <th className="text-right p-2">الاسم</th>
                       <th className="text-right p-2">الحجم</th>
                       <th className="text-right p-2">تاريخ الرفع</th>
-                      <th className="text-right p-2">الإصدار</th>
-                      <th className="text-right p-2">تحميل</th>
+                      <th className="text-right p-2">إجراءات</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.files!.map((f) => (
+                    {data.files!.map(f => (
                       <tr key={String(f.id)} className="border-t">
                         <td className="p-2">{f.fileNameOriginal}</td>
                         <td className="p-2">{formatBytes(f.fileSizeBytes)}</td>
                         <td className="p-2">{formatDT(f.uploadedAt)}</td>
-                        <td className="p-2">{f.versionNumber ?? '—'}</td>
                         <td className="p-2">
-                          {f.fileUrl ? (
+                          <button
+                            className="rounded-xl border px-3 py-1.5 text-xs hover:bg-gray-50"
+                            onClick={() => onOpenPreview(f)}
+                          >
+                            معاينة
+                          </button>
+                          {f.fileUrl && (
                             <a
-                              className="text-blue-600 hover:underline"
-                              href={f.fileUrl.startsWith('/files/') ? f.fileUrl : `/files/${f.fileUrl.replace(/^\/+/, '')}`}
+                              className="ml-2 rounded-xl bg-slate-800 text-white px-3 py-1.5 text-xs"
+                              href={f.fileUrl}
                               target="_blank"
                               rel="noreferrer"
                             >
                               تنزيل
                             </a>
-                          ) : (
-                            '—'
                           )}
                         </td>
                       </tr>
@@ -242,44 +233,363 @@ export default function IncomingDetailsPage() {
           </section>
 
           {/* التوزيعات */}
-          {Array.isArray(data.distributions) && (
-            <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
-              <h2 className="text-lg font-semibold mb-3">التوزيعات</h2>
-              {data.distributions.length > 0 ? (
-                <div className="overflow-auto rounded-xl border">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="bg-gray-100">
-                        <th className="text-right p-2">الحالة</th>
-                        <th className="text-right p-2">القسم المستهدف</th>
-                        <th className="text-right p-2">المكلّف</th>
-                        <th className="text-right p-2">آخر تحديث</th>
-                        <th className="text-right p-2">ملاحظات</th>
+          <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
+            <h2 className="text-lg font-semibold mb-3">التوزيعات</h2>
+            {(data.distributions?.length ?? 0) > 0 ? (
+              <div className="overflow-auto rounded-xl border">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-100">
+                      <th className="text-right p-2">الحالة</th>
+                      <th className="text-right p-2">القسم المستهدف</th>
+                      <th className="text-right p-2">المكلّف</th>
+                      <th className="text-right p-2">آخر تحديث</th>
+                      <th className="text-right p-2">ملاحظات</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.distributions!.map(d => (
+                      <tr key={String(d.id)} className="border-t">
+                        <td className="p-2">{d.status}</td>
+                        <td className="p-2">{d.targetDepartmentName ?? '—'}</td>
+                        <td className="p-2">{d.assignedToUserName ?? '—'}</td>
+                        <td className="p-2">{formatDT(d.lastUpdateAt)}</td>
+                        <td className="p-2">{d.notes ?? '—'}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {data.distributions.map((d) => (
-                        <tr key={String(d.id)} className="border-t">
-                          <td className="p-2">{d.status}</td>
-                          <td className="p-2">{d.targetDepartmentName ?? '—'}</td>
-                          <td className="p-2">{d.assignedToUserName ?? '—'}</td>
-                          <td className="p-2">{formatDT(d.lastUpdateAt)}</td>
-                          <td className="p-2">{d.notes ?? '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="text-sm text-gray-500">لا توجد توزيعات.</div>
-              )}
-            </section>
-          )}
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500">لا توجد توزيعات.</div>
+            )}
+          </section>
         </>
       )}
+
+      {/* مودال المعاينة (تحميل كسول + حارس) */}
+      <Suspense fallback={null}>
+        <FilePreviewModal
+          open={previewOpen}
+          file={previewFile}
+          onClose={() => setPreviewOpen(false)}
+        />
+      </Suspense>
     </div>
   );
 }
+
+
+
+
+// import { useEffect, useMemo, useState } from 'react';
+// import { Link, useParams } from 'react-router-dom';
+// import api from '../api/apiClient';
+// import FileUpload from '../components/files/FileUpload';
+// import FilePreview, { type PreviewFile } from '../components/files/FilePreview';
+
+// const [previewOpen, setPreviewOpen] = useState(false);
+// const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
+// const openPreview = (f: any) => {
+//   if (!f?.fileUrl) return;
+//   setPreviewFile({
+//     id: f.id,
+//     fileNameOriginal: f.fileNameOriginal,
+//     fileUrl: f.fileUrl.startsWith('/files/') ? f.fileUrl : `/files/${String(f.fileUrl).replace(/^\/+/, '')}`,
+//     fileExtension: f.fileExtension,
+//   });
+//   setPreviewOpen(true);
+// };
+
+// type DocFile = {
+//   id: string | number;
+//   fileNameOriginal: string;
+//   fileUrl?: string;
+//   fileSizeBytes?: number;
+//   uploadedAt?: string;
+//   versionNumber?: number;
+// };
+
+// type DistributionRow = {
+//   id: string | number;
+//   status: string;
+//   targetDepartmentName?: string;
+//   assignedToUserName?: string | null;
+//   lastUpdateAt?: string;
+//   notes?: string | null;
+// };
+
+// type IncomingDetails = {
+//   id: string | number;
+//   incomingNumber: string;
+//   receivedDate: string;
+//   deliveryMethod?: string;
+//   urgencyLevel?: string | null;
+//   externalPartyName?: string;
+//   document?: {
+//     id: string | number;
+//     title: string;
+//     currentStatus?: string;
+//     createdAt?: string;
+//     owningDepartmentName?: string;
+//   } | null;
+//   files?: DocFile[];
+//   distributions?: DistributionRow[];
+// };
+
+// const tryPaths = (id: string | number) => [
+//   `/incoming/${id}`,
+//   `/incoming/details/${id}`,
+//   `/incoming/summary/${id}`,
+// ];
+
+// function formatDT(v?: string) {
+//   if (!v) return '—';
+//   const d = new Date(v);
+//   if (isNaN(d.getTime())) return '—';
+//   return d.toLocaleString('ar-LY', {
+//     year: 'numeric', month: '2-digit', day: '2-digit',
+//     hour: '2-digit', minute: '2-digit'
+//   });
+// }
+
+// function formatBytes(b?: number) {
+//   if (!b && b !== 0) return '—';
+//   const u = ['B', 'KB', 'MB', 'GB']; let i = 0; let x = b!;
+//   while (x >= 1024 && i < u.length - 1) { x /= 1024; i++; }
+//   return `${x.toFixed(1)} ${u[i]}`;
+// }
+
+// export default function IncomingDetailsPage() {
+//   const { id } = useParams<{ id: string }>();
+//   const [data, setData] = useState<IncomingDetails | null>(null);
+//   const [loading, setLoading] = useState(true);
+//   const [err, setErr] = useState<string | null>(null);
+
+//   const hasFiles = useMemo(() => (data?.files?.length ?? 0) > 0, [data]);
+
+//   const load = async () => {
+//     setLoading(true); setErr(null);
+//     let detail: IncomingDetails | null = null;
+
+//     for (const path of tryPaths(id!)) {
+//       try {
+//         const res = await api.get<IncomingDetails>(path);
+//         detail = res.data;
+//         break;
+//       } catch {}
+//     }
+//     if (!detail) {
+//       setErr('لم يتم العثور على تفاصيل هذا الوارد.');
+//       setLoading(false);
+//       return;
+//     }
+
+//     // حمّل الملفات إن وُجد documentId
+//     try {
+//       if (detail.document?.id) {
+//         const resFiles = await api.get<DocFile[]>(`/documents/${detail.document.id}/files`);
+//         detail = { ...detail, files: resFiles.data || [] };
+//       }
+//     } catch {}
+
+//     setData(detail);
+//     setLoading(false);
+//   };
+
+//   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
+
+//   const refreshFiles = async () => {
+//     if (!data?.document?.id) return;
+//     try {
+//       const resFiles = await api.get<DocFile[]>(`/documents/${data.document.id}/files`);
+//       setData((old) => old ? ({ ...old, files: resFiles.data || [] }) : old);
+//     } catch {}
+//   };
+
+//   return (
+//     <div className="space-y-6" dir="rtl">
+//       <header className="flex items-center justify-between">
+//         <div>
+//           <h1 className="text-2xl font-bold">تفاصيل الوارد</h1>
+//           <p className="text-sm text-gray-500 mt-1">عرض كل المعلومات المتعلقة بالمعاملة الواردة</p>
+//         </div>
+//         <div className="flex items-center gap-2">
+//           <Link to="/incoming" className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50">رجوع للوارد</Link>
+//         </div>
+//       </header>
+
+//       {loading && <div className="text-sm text-gray-500">جاري التحميل…</div>}
+//       {err && <div className="text-sm text-red-600">{err}</div>}
+
+//       {!loading && !err && data && (
+//         <>
+//           {/* معلومات أساسية */}
+//           <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
+//             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+//               <div>
+//                 <div className="text-xs text-gray-500">رقم الوارد</div>
+//                 <div className="font-mono text-lg">{data.incomingNumber}</div>
+//               </div>
+//               <div>
+//                 <div className="text-xs text-gray-500">التاريخ</div>
+//                 <div>{formatDT(data.receivedDate)}</div>
+//               </div>
+//               <div>
+//                 <div className="text-xs text-gray-500">طريقة التسليم</div>
+//                 <div>{data.deliveryMethod ?? '—'}</div>
+//               </div>
+//               <div>
+//                 <div className="text-xs text-gray-500">درجة الأهمية</div>
+//                 <div>{data.urgencyLevel ?? '—'}</div>
+//               </div>
+//               <div>
+//                 <div className="text-xs text-gray-500">الجهة</div>
+//                 <div>{data.externalPartyName ?? '—'}</div>
+//               </div>
+//               <div>
+//                 <div className="text-xs text-gray-500">ملفات مرفقة</div>
+//                 <div>{hasFiles ? 'نعم' : 'لا'}</div>
+//               </div>
+//             </div>
+//           </section>
+
+//           {/* الوثيقة */}
+//           <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
+//             <h2 className="text-lg font-semibold mb-3">الوثيقة</h2>
+//             {data.document ? (
+//               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+//                 <div>
+//                   <div className="text-xs text-gray-500">العنوان</div>
+//                   <div className="font-semibold">{data.document.title}</div>
+//                 </div>
+//                 <div>
+//                   <div className="text-xs text-gray-500">الحالة</div>
+//                   <div>{data.document.currentStatus ?? '—'}</div>
+//                 </div>
+//                 <div>
+//                   <div className="text-xs text-gray-500">القسم المالِك</div>
+//                   <div>{data.document.owningDepartmentName ?? '—'}</div>
+//                 </div>
+//                 <div>
+//                   <div className="text-xs text-gray-500">تاريخ الإنشاء</div>
+//                   <div>{formatDT(data.document.createdAt)}</div>
+//                 </div>
+//               </div>
+//             ) : (
+//               <div className="text-sm text-gray-500">لا توجد معلومات وثيقة.</div>
+//             )}
+//           </section>
+
+//           {/* الرفع + الملفات */}
+//           <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5 space-y-4">
+//             <div className="flex items-center justify-between">
+//               <h2 className="text-lg font-semibold">الملفات</h2>
+//               {data.document?.id && (
+//                 <FileUpload
+//                   documentId={data.document.id}
+//                   accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.tif,.tiff"
+//                   maxSizeMB={50}
+//                   buttonLabel="رفع ملف"
+//                   onUploaded={refreshFiles}
+//                 />
+//               )}
+//             </div>
+
+//             {hasFiles ? (
+//                 <div className="overflow-auto rounded-xl border">
+//                   <table className="min-w-full text-sm">
+//                     <thead>
+//                       <tr className="bg-gray-100">
+//                         <th className="text-right p-2">الاسم</th>
+//                         <th className="text-right p-2">الحجم</th>
+//                         <th className="text-right p-2">تاريخ الرفع</th>
+//                         <th className="text-right p-2">الإصدار</th>
+//                         <th className="text-right p-2">إجراءات</th>
+//                       </tr>
+//                     </thead>
+//                     <tbody>
+//                       {data.files!.map((f) => {
+//                         const url = f.fileUrl?.startsWith('/files/') ? f.fileUrl : (f.fileUrl ? `/files/${String(f.fileUrl).replace(/^\/+/, '')}` : undefined);
+//                         return (
+//                           <tr key={String(f.id)} className="border-t">
+//                             <td className="p-2">{f.fileNameOriginal}</td>
+//                             <td className="p-2">{formatBytes(f.fileSizeBytes)}</td>
+//                             <td className="p-2">{formatDT(f.uploadedAt)}</td>
+//                             <td className="p-2">{f.versionNumber ?? '—'}</td>
+//                             <td className="p-2 flex items-center gap-2">
+//                               {url ? (
+//                                 <>
+//                                   <button
+//                                     type="button"
+//                                     className="rounded-xl border px-3 py-1 text-xs hover:bg-gray-50"
+//                                     onClick={() => openPreview(f)}
+//                                   >
+//                                     معاينة
+//                                   </button>
+//                                   <a
+//                                     className="rounded-xl border px-3 py-1 text-xs hover:bg-gray-50"
+//                                     href={url}
+//                                     target="_blank"
+//                                     rel="noreferrer"
+//                                   >
+//                                     تنزيل
+//                                   </a>
+//                                 </>
+//                               ) : '—'}
+//                             </td>
+//                           </tr>
+//                         );
+//                       })}
+//                     </tbody>
+//                   </table>
+//                 </div>
+//               ) : (
+//                 <div className="text-sm text-gray-500">لا توجد ملفات مرفقة.</div>
+//               )}
+//               {/* مودال المعاينة */}
+//               <FilePreview open={previewOpen} onClose={() => setPreviewOpen(false)} file={previewFile} />
+//           </section>
+
+//           {/* التوزيعات */}
+//           {Array.isArray(data.distributions) && (
+//             <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
+//               <h2 className="text-lg font-semibold mb-3">التوزيعات</h2>
+//               {data.distributions.length > 0 ? (
+//                 <div className="overflow-auto rounded-xl border">
+//                   <table className="min-w-full text-sm">
+//                     <thead>
+//                       <tr className="bg-gray-100">
+//                         <th className="text-right p-2">الحالة</th>
+//                         <th className="text-right p-2">القسم المستهدف</th>
+//                         <th className="text-right p-2">المكلّف</th>
+//                         <th className="text-right p-2">آخر تحديث</th>
+//                         <th className="text-right p-2">ملاحظات</th>
+//                       </tr>
+//                     </thead>
+//                     <tbody>
+//                       {data.distributions.map((d) => (
+//                         <tr key={String(d.id)} className="border-t">
+//                           <td className="p-2">{d.status}</td>
+//                           <td className="p-2">{d.targetDepartmentName ?? '—'}</td>
+//                           <td className="p-2">{d.assignedToUserName ?? '—'}</td>
+//                           <td className="p-2">{formatDT(d.lastUpdateAt)}</td>
+//                           <td className="p-2">{d.notes ?? '—'}</td>
+//                         </tr>
+//                       ))}
+//                     </tbody>
+//                   </table>
+//                 </div>
+//               ) : (
+//                 <div className="text-sm text-gray-500">لا توجد توزيعات.</div>
+//               )}
+//             </section>
+//           )}
+//         </>
+//       )}
+//     </div>
+//   );
+// }
 
 
 

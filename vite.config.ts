@@ -8,4 +8,13 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
-})
+  resolve: {
+    dedupe: ['react', 'react-dom'],
+  },
+  server: {
+    proxy: {
+      '/api':   { target: 'http://localhost:3000', changeOrigin: true },
+      '/files': { target: 'http://localhost:3000', changeOrigin: true },
+    }
+  }
+});
