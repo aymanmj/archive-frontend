@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import api from "../api/apiClient";
 import FilePreview from "../components/files/FilePreview";
 import type { PreviewFile } from "../components/files/FilePreview";
-import { toast } from "sonner"; // ✅ جديد
+import { toast } from "sonner";
 
 type Department = { id: number; name: string; status?: string };
 type UserLite   = { id: number; fullName: string; departmentId: number|null };
@@ -61,6 +61,14 @@ function fmtDT(v?: string) {
     hour: "2-digit", minute: "2-digit",
   });
 }
+
+// لاستخراج رسالة الخطأ من Axios
+const errMsg = (e: any) =>
+  e?.response?.data?.message
+    ? Array.isArray(e.response.data.message)
+      ? e.response.data.message.join(" | ")
+      : String(e.response.data.message)
+    : (e?.message || "حدث خطأ");
 
 export default function IncomingDetailsPage() {
   const { id } = useParams();
@@ -181,26 +189,32 @@ export default function IncomingDetailsPage() {
     }
   };
 
-  // ——— Handlers ———
+  // ——— Handlers (مع toast.promise/ loading) ———
   const submitForward = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!id) return;
     if (!fwdDept) return toast.warning("اختر القسم المستهدف");
     setBusy(true);
     try {
-      await api.post(`/incoming/${id}/forward`, {
-        targetDepartmentId: Number(fwdDept),
-        assignedToUserId: fwdUser ? Number(fwdUser) : undefined,
-        note: fwdNote || null,
-        closePrevious: !!fwdClosePrev,
-      });
+      await toast.promise(
+        api.post(`/incoming/${id}/forward`, {
+          targetDepartmentId: Number(fwdDept),
+          assignedToUserId: fwdUser ? Number(fwdUser) : undefined,
+          note: fwdNote || null,
+          closePrevious: !!fwdClosePrev,
+        }),
+        {
+          loading: "جاري تنفيذ الإحالة...",
+          success: "تمت الإحالة بنجاح",
+          error: (e) => errMsg(e),
+        }
+      );
       setFwdNote("");
       await refreshDetails();
-      toast.success("تمت الإحالة بنجاح");
       setTab("overview");
-    } catch (e:any) {
-      toast.error(e?.response?.data?.message ?? "فشل الإحالة");
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   };
 
   const submitAssign = async (e: React.FormEvent) => {
@@ -210,17 +224,23 @@ export default function IncomingDetailsPage() {
     if (!assignUser)    return toast.warning("اختر المكلّف");
     setBusy(true);
     try {
-      await api.patch(`/incoming/distributions/${selectedDistId}/assign`, {
-        assignedToUserId: Number(assignUser),
-        note: assignNote || null,
-      });
+      await toast.promise(
+        api.patch(`/incoming/distributions/${selectedDistId}/assign`, {
+          assignedToUserId: Number(assignUser),
+          note: assignNote || null,
+        }),
+        {
+          loading: "جاري تطبيق التعيين...",
+          success: "تم التعيين",
+          error: (e) => errMsg(e),
+        }
+      );
       setAssignNote("");
       await refreshDetails();
-      toast.success("تم التعيين");
       setTab("overview");
-    } catch (e:any) {
-      toast.error(e?.response?.data?.message ?? "فشل التعيين");
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   };
 
   const submitStatus = async (e: React.FormEvent) => {
@@ -228,16 +248,22 @@ export default function IncomingDetailsPage() {
     if (!selectedDistId) return toast.warning("اختر التوزيع أولًا");
     setBusy(true);
     try {
-      await api.patch(`/incoming/distributions/${selectedDistId}/status`, {
-        status: newStatus,
-        note: statusNote || null,
-      });
+      await toast.promise(
+        api.patch(`/incoming/distributions/${selectedDistId}/status`, {
+          status: newStatus,
+          note: statusNote || null,
+        }),
+        {
+          loading: "جاري تغيير الحالة...",
+          success: "تم تغيير الحالة",
+          error: (e) => errMsg(e),
+        }
+      );
       setStatusNote("");
       await refreshDetails();
-      toast.success("تم تغيير الحالة بنجاح");
-    } catch (e:any) {
-      toast.error(e?.response?.data?.message ?? "فشل تغيير الحالة");
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   };
 
   const submitNote = async (e: React.FormEvent) => {
@@ -246,15 +272,21 @@ export default function IncomingDetailsPage() {
     if (!plainNote.trim())    return toast.warning("اكتب ملاحظة");
     setBusy(true);
     try {
-      await api.post(`/incoming/distributions/${selectedDistId}/note`, {
-        note: plainNote.trim(),
-      });
+      await toast.promise(
+        api.post(`/incoming/distributions/${selectedDistId}/note`, {
+          note: plainNote.trim(),
+        }),
+        {
+          loading: "جاري إضافة الملاحظة...",
+          success: "تمت إضافة الملاحظة",
+          error: (e) => errMsg(e),
+        }
+      );
       setPlainNote("");
       await refreshDetails();
-      toast.success("تمت إضافة الملاحظة");
-    } catch (e:any) {
-      toast.error(e?.response?.data?.message ?? "فشل إضافة الملاحظة");
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   };
 
   const openPreview = (f: PreviewFile) => {
@@ -565,6 +597,7 @@ export default function IncomingDetailsPage() {
 // import api from "../api/apiClient";
 // import FilePreview from "../components/files/FilePreview";
 // import type { PreviewFile } from "../components/files/FilePreview";
+// import { toast } from "sonner"; // ✅ جديد
 
 // type Department = { id: number; name: string; status?: string };
 // type UserLite   = { id: number; fullName: string; departmentId: number|null };
@@ -681,7 +714,9 @@ export default function IncomingDetailsPage() {
 //           det.data.distributions?.find(d => d.status==="Open" || d.status==="InProgress")
 //           ?? det.data.distributions?.[0];
 //         if (auto) setSelectedDistId(auto.id);
-//       } catch {}
+//       } catch {
+//         toast.error("تعذّر تحميل التفاصيل");
+//       }
 //       finally { setLoading(false); }
 //     })();
 //   }, [id]);
@@ -695,7 +730,9 @@ export default function IncomingDetailsPage() {
 //       try {
 //         const res = await api.get<UserLite[]>(`/users/by-department/${fwdDept}`);
 //         setFwdUsers(Array.isArray(res.data) ? res.data : []);
-//       } catch {}
+//       } catch {
+//         toast.error("تعذّر تحميل مستخدمي الإدارة المحددة");
+//       }
 //       finally { setFwdUsersLoading(false); }
 //     })();
 //   }, [fwdDept]);
@@ -709,7 +746,9 @@ export default function IncomingDetailsPage() {
 //       try {
 //         const res = await api.get<UserLite[]>(`/users/by-department/${assignDept}`);
 //         setAssignUsers(Array.isArray(res.data) ? res.data : []);
-//       } catch {}
+//       } catch {
+//         toast.error("تعذّر تحميل مستخدمي الإدارة المحددة");
+//       }
 //       finally { setAssignUsersLoading(false); }
 //     })();
 //   }, [assignDept]);
@@ -731,14 +770,16 @@ export default function IncomingDetailsPage() {
 //       } else {
 //         setSelectedDistId("");
 //       }
-//     } catch {}
+//     } catch {
+//       toast.error("تعذّر تحديث البيانات");
+//     }
 //   };
 
 //   // ——— Handlers ———
 //   const submitForward = async (e: React.FormEvent) => {
 //     e.preventDefault();
 //     if (!id) return;
-//     if (!fwdDept) return alert("اختر القسم المستهدف");
+//     if (!fwdDept) return toast.warning("اختر القسم المستهدف");
 //     setBusy(true);
 //     try {
 //       await api.post(`/incoming/${id}/forward`, {
@@ -749,18 +790,18 @@ export default function IncomingDetailsPage() {
 //       });
 //       setFwdNote("");
 //       await refreshDetails();
-//       alert("تمت الإحالة");
+//       toast.success("تمت الإحالة بنجاح");
 //       setTab("overview");
 //     } catch (e:any) {
-//       alert(e?.response?.data?.message ?? "فشل الإحالة");
+//       toast.error(e?.response?.data?.message ?? "فشل الإحالة");
 //     } finally { setBusy(false); }
 //   };
 
 //   const submitAssign = async (e: React.FormEvent) => {
 //     e.preventDefault();
-//     if (!selectedDistId) return alert("اختر التوزيع أولًا");
-//     if (!assignDept) return alert("اختر الإدارة");
-//     if (!assignUser) return alert("اختر المكلّف");
+//     if (!selectedDistId) return toast.warning("اختر التوزيع أولًا");
+//     if (!assignDept)    return toast.warning("اختر الإدارة");
+//     if (!assignUser)    return toast.warning("اختر المكلّف");
 //     setBusy(true);
 //     try {
 //       await api.patch(`/incoming/distributions/${selectedDistId}/assign`, {
@@ -769,16 +810,16 @@ export default function IncomingDetailsPage() {
 //       });
 //       setAssignNote("");
 //       await refreshDetails();
-//       alert("تم التعيين");
+//       toast.success("تم التعيين");
 //       setTab("overview");
 //     } catch (e:any) {
-//       alert(e?.response?.data?.message ?? "فشل التعيين");
+//       toast.error(e?.response?.data?.message ?? "فشل التعيين");
 //     } finally { setBusy(false); }
 //   };
 
 //   const submitStatus = async (e: React.FormEvent) => {
 //     e.preventDefault();
-//     if (!selectedDistId) return alert("اختر التوزيع أولًا");
+//     if (!selectedDistId) return toast.warning("اختر التوزيع أولًا");
 //     setBusy(true);
 //     try {
 //       await api.patch(`/incoming/distributions/${selectedDistId}/status`, {
@@ -787,27 +828,26 @@ export default function IncomingDetailsPage() {
 //       });
 //       setStatusNote("");
 //       await refreshDetails();
-//       alert("تم تغيير الحالة");
+//       toast.success("تم تغيير الحالة بنجاح");
 //     } catch (e:any) {
-//       alert(e?.response?.data?.message ?? "فشل تغيير الحالة");
+//       toast.error(e?.response?.data?.message ?? "فشل تغيير الحالة");
 //     } finally { setBusy(false); }
 //   };
 
 //   const submitNote = async (e: React.FormEvent) => {
 //     e.preventDefault();
-//     if (!selectedDistId) return alert("اختر التوزيع أولًا");
-//     if (!plainNote.trim()) return alert("اكتب ملاحظة");
+//     if (!selectedDistId)      return toast.warning("اختر التوزيع أولًا");
+//     if (!plainNote.trim())    return toast.warning("اكتب ملاحظة");
 //     setBusy(true);
 //     try {
-//       // إن كان الراوت عندك POST /note أو PATCH /note عدّله هنا حسب الكنترولر لديك
 //       await api.post(`/incoming/distributions/${selectedDistId}/note`, {
 //         note: plainNote.trim(),
 //       });
 //       setPlainNote("");
 //       await refreshDetails();
-//       alert("تمت إضافة الملاحظة");
+//       toast.success("تمت إضافة الملاحظة");
 //     } catch (e:any) {
-//       alert(e?.response?.data?.message ?? "فشل إضافة الملاحظة");
+//       toast.error(e?.response?.data?.message ?? "فشل إضافة الملاحظة");
 //     } finally { setBusy(false); }
 //   };
 
