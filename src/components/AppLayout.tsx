@@ -2,6 +2,7 @@ import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import Button from './ui/Button';
 import { useAuthStore } from '../stores/authStore';
 import React from 'react';
+import { Toaster } from "sonner";
 
 function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
   return (
@@ -78,6 +79,15 @@ export default function AppLayout() {
       <footer className="border-t py-4 mt-8 text-center text-xs text-gray-500">
         © {new Date().getFullYear()} السرايا للتقنية — جميع الحقوق محفوظة
       </footer>
+
+      {/* ✅ Toaster عام للتطبيق كله */}
+      <Toaster
+        position="top-center"
+        duration={3000}
+        dir="rtl"
+        richColors
+        expand
+      />
     </div>
   );
 }
