@@ -64,6 +64,7 @@ export default function AppLayout() {
               <NavItem to="/incoming">الوارد</NavItem>
               <NavItem to="/outgoing">الصادر</NavItem>
               <NavItem to="/departments">الأقسام</NavItem>
+              <NavItem to="/my-desk">طاولتي</NavItem>
             </nav>
           </aside>
 

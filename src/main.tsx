@@ -14,6 +14,7 @@ import IncomingPage from './pages/IncomingPage';
 import IncomingDetailsPage from './pages/IncomingDetailsPage';
 import OutgoingPage from './pages/OutgoingPage';
 import OutgoingDetailsPage from './pages/OutgoingDetailsPage';
+import MyDeskPage from "./pages/MyDeskPage";
 
 document.documentElement.dir = 'rtl';
 document.documentElement.lang = 'ar';
@@ -34,6 +35,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <Route path="/incoming/:id" element={<IncomingDetailsPage />} />
               <Route path="/outgoing" element={<OutgoingPage />} />
               <Route path="/outgoing/:id" element={<OutgoingDetailsPage />} />
+              <Route path="/my-desk" element={<MyDeskPage />} />
             </Route>
           </Route>
         </Routes>
