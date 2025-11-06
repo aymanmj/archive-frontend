@@ -218,7 +218,7 @@ export default function DashboardPage() {
       <section className="grid md:grid-cols-2 gap-6">
         {/* وارد */}
         {/*<div className="rounded-2xl border bg-gradient-to-br from-sky-50 to-white p-4 shadow-sm">*/}
-        <div className="rounded-2xl border bg-gradient-to-br from-sky-50 to-white p-4 shadow-[0_4px_20px_-8px_rgba(0,0,0,0.08)]">
+        <div className="rounded-2xl border bg-gradient-to-br from-sky-50 p-4 shadow-[0_4px_20px_-8px_rgba(0,0,0,0.08)]">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="rounded-xl bg-sky-100 p-2 text-sky-700"><Inbox className="size-5" /></div>
@@ -247,7 +247,7 @@ export default function DashboardPage() {
 
         {/* صادر */}
         {/*<div className="rounded-2xl border bg-gradient-to-br from-violet-50 to-white p-4 shadow-sm">*/}
-        <div className="rounded-2xl border bg-gradient-to-br from-sky-50 to-white p-4 shadow-[0_4px_20px_-8px_rgba(0,0,0,0.08)]">
+        <div className="rounded-2xl border bg-gradient-to-br from-sky-50 p-4 shadow-[0_4px_20px_-8px_rgba(0,0,0,0.08)]">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="rounded-xl bg-violet-100 p-2 text-violet-700"><Send className="size-5" /></div>

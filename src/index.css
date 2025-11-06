@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+/* ✅ يفعّل dark: مع كلاس .dark على html/body (بدون tailwind.config.js) */
+@custom-variant dark (&:where(.dark, .dark *));
 
 /* ===== RTL base tweaks ===== */
 body.rtl {
@@ -29,6 +31,73 @@ body.rtl {
 .rtl .flip-rtl {
   transform: scaleX(-1);
 }
+
+/* ========= Theme tokens (Light/Dark) ========= */
+:root {
+  --bg: #f8fafc;              /* خلفية التطبيق */
+  --fg: #0f172a;              /* لون النص الأساسي */
+  --muted: #475569;           /* نص ثانوي */
+  --card: #ffffff;            /* بطاقات/حاويات */
+  --border: #e2e8f0;          /* حدود */
+  --input: #ffffff;           /* حقول الإدخال */
+  --chip: #f1f5f9;            /* شرائح صغيرة / badges */
+}
+
+.dark {
+  --bg: #0b1220;
+  --fg: #e2e8f0;
+  --muted: #94a3b8;
+  --card: #0f172a;
+  --border: #1f2937;
+  --input: #111827;
+  --chip: #0b1626;
+}
+
+/* خلفية/نص عام للتطبيق */
+html, body { background: var(--bg); color: var(--fg); }
+
+/* اجعل أي عنصر يحمل bg-white يُطابق سطح البطاقة في الثيم الحالي */
+.bg-white { background-color: var(--card) !important; }
+.border { border-color: var(--border) !important; }
+
+/* نصوص محايدة شائعة */
+.text-gray-600, .text-gray-500, .text-gray-700 { color: var(--muted) !important; }
+
+/* حقول الإدخال والـ select */
+input, select, textarea {
+  background: var(--input) !important;
+  color: var(--fg) !important;
+  border-color: var(--border) !important;
+}
+input::placeholder, textarea::placeholder {
+  color: color-mix(in oklab, var(--muted), transparent 35%);
+}
+
+/* الأزرار ذات الحدود في الوضع الليلي تبقى واضحة */
+button.border, .rounded-xl.border, .rounded-2xl.border {
+  border-color: var(--border) !important;
+}
+
+/* الجداول */
+table thead tr { background: color-mix(in oklab, var(--card), var(--fg) 6%); }
+table tbody tr { border-color: var(--border); }
+
+/* شرائح/Badges خفيفة */
+.badge, .chip { background: var(--chip); color: var(--fg); }
+
+/* Recharts (المحاور/الخطوط/الليجند) */
+.recharts-default-legend, .recharts-text { fill: var(--muted) !important; color: var(--muted) !important; }
+.recharts-cartesian-grid line { stroke: var(--border) !important; }
+.recharts-xAxis .recharts-cartesian-axis-tick-value,
+.recharts-yAxis .recharts-cartesian-axis-tick-value { fill: var(--muted) !important; }
+
+/* حواف الكروت الكبرى */
+.card, .panel, .container-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+}
+
 
 /*
 :root {
