@@ -300,9 +300,9 @@ export default function MyDeskPage() {
     <div className="space-y-6" dir="rtl">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">طاولتي</h1>
+          <h1 className="text-2xl font-bold">مكتبي</h1>
           <p className="text-sm text-gray-500 mt-1">
-            كل التوزيعات المفتوحة/تحت الإجراء المرتبطة بك أو بقسمك
+            كل التوزيعات المفتوحة/تحت الإجراء المرتبطة بك أو بإدارتك/قسمك
           </p>
         </div>
       </header>

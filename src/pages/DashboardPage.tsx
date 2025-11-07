@@ -151,6 +151,7 @@ export default function DashboardPage() {
 
   return (
     // <div className="space-y-6" dir="rtl">
+    // <div className="space-y-6 overflow-x-hidden" dir="rtl">
     <div className="space-y-6 overflow-x-hidden" dir="rtl">
       <header className="flex items-center justify-between">
         <div className="space-y-1">
