@@ -153,6 +153,9 @@ export default function AppLayout() {
                 <PermissionsGate one="audit.read">
                   <NavItem to="/audit">سجل التدقيق</NavItem>
                 </PermissionsGate>
+                <PermissionsGate one="admin.rbac">
+                  <NavItem to="/rbac">إدارة الصلاحيات</NavItem>
+                </PermissionsGate>
               </nav>
             )}
           </aside>
