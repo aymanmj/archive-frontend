@@ -18,6 +18,7 @@ import OutgoingPage from './pages/OutgoingPage';
 import OutgoingDetailsPage from './pages/OutgoingDetailsPage';
 import MyDeskPage from "./pages/MyDeskPage";
 import RbacPage from './pages/RbacPage';
+import UsersAdminPage from './pages/UsersAdminPage';
 
 // ⬇️ مزوّد الصلاحيات
 import { PermissionsProvider } from './permissions/PermissionsContext';
@@ -44,6 +45,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <Route path="/outgoing/:id" element={<OutgoingDetailsPage />} />
                 <Route path="/my-desk" element={<MyDeskPage />} />
                 <Route path="/rbac" element={<RbacPage />} />
+                <Route path="/usersadmin" element={<UsersAdminPage />} />
               </Route>
             </Route>
           </Routes>

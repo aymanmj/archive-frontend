@@ -1,10 +1,7 @@
-// src/pages/RbacPage.tsx
-
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/apiClient";
 import PermissionsGate from "../components/PermissionsGate";
 import { toast } from "sonner";
-import { useAuthStore } from "../stores/authStore";
 
 type Permission = { id: number; code: string; description?: string | null };
 type Role = {
@@ -15,21 +12,67 @@ type Role = {
 };
 type User = { id: number; fullName: string };
 
+type Recipe = {
+  key: string;
+  title: string;
+  description: string;
+  roleName: string;
+  permissions: string[];
+};
+
+const RECIPES: Recipe[] = [
+  {
+    key: "viewer",
+    title: "VIEWER (قراءة فقط)",
+    description: "وصول للقراءة فقط للوارد/الصادر/الأقسام.",
+    roleName: "VIEWER",
+    permissions: ["incoming.read", "outgoing.read", "departments.read"],
+  },
+  {
+    key: "clerk_incoming",
+    title: "CLERK_INCOMING (كاتب وارد)",
+    description: "إدخال واردات ورفع مرفقات + قراءة أساسية.",
+    roleName: "CLERK_INCOMING",
+    permissions: ["incoming.read", "incoming.create", "files.upload", "departments.read"],
+  },
+  {
+    key: "supervisor_incoming",
+    title: "SUPERVISOR_INCOMING (مشرف وارد)",
+    description: "قراءة وتوجيه وتوزيع وتحديث حالات الوارد.",
+    roleName: "SUPERVISOR_INCOMING",
+    permissions: ["incoming.read", "incoming.forward", "incoming.assign", "incoming.updateStatus", "departments.read"],
+  },
+  {
+    key: "auditor",
+    title: "AUDITOR (مدقق)",
+    description: "قراءة سجلات التدقيق + قراءة عامة.",
+    roleName: "AUDITOR",
+    permissions: ["audit.read", "incoming.read", "outgoing.read", "departments.read"],
+  },
+];
+
 export default function RbacPage() {
   const [perms, setPerms] = useState<Permission[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-
-  const [selectedRoleId, setSelectedRoleId] = useState<number | null>(null);
-  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
-
   const [busy, setBusy] = useState(false);
-  const me = useAuthStore((s) => s.user);
 
-  // حالة محلية لصلاحيات الدور المختار
-  const [rolePerms, setRolePerms] = useState<Set<string>>(new Set());
-  // حالة محلية لأدوار المستخدم المختار
-  const [userRoleIds, setUserRoleIds] = useState<Set<number>>(new Set());
+  const [selectedRoleId, setSelectedRoleId] = useState<number | "">("");
+  const [selectedUserId, setSelectedUserId] = useState<number | "">("");
+
+  const [userRoleIds, setUserRoleIds] = useState<number[]>([]);
+  const selectedRole = useMemo(
+    () => roles.find((r) => r.id === Number(selectedRoleId)) || null,
+    [roles, selectedRoleId]
+  );
+  const selectedUser = useMemo(
+    () => users.find((u) => u.id === Number(selectedUserId)) || null,
+    [users, selectedUserId]
+  );
+
+  // إنشاء دور يدوي
+  const [newRoleName, setNewRoleName] = useState("");
+  const [newRoleDesc, setNewRoleDesc] = useState("");
 
   async function loadAll() {
     const [p, r, u] = await Promise.all([
@@ -42,70 +85,41 @@ export default function RbacPage() {
     setUsers(u.data);
   }
 
+  async function loadUserRoles(uid: number) {
+    const { data } = await api.get(`/rbac/users/${uid}/roles`);
+    const ids = (data as { id: number }[]).map((x) => x.id);
+    setUserRoleIds(ids);
+  }
+
   useEffect(() => {
     loadAll().catch(() => toast.error("فشل تحميل بيانات RBAC"));
   }, []);
 
-  const selectedRole = useMemo(
-    () => roles.find((r) => r.id === selectedRoleId) ?? null,
-    [roles, selectedRoleId]
-  );
-  const selectedUser = useMemo(
-    () => users.find((u) => u.id === selectedUserId) ?? null,
-    [users, selectedUserId]
-  );
-
-  // مزامنة rolePerms عند تغيير الدور
   useEffect(() => {
-    if (!selectedRole) {
-      setRolePerms(new Set());
-      return;
+    if (selectedUserId && Number(selectedUserId) > 0) {
+      loadUserRoles(Number(selectedUserId)).catch(() =>
+        toast.error("فشل جلب أدوار المستخدم")
+      );
+    } else {
+      setUserRoleIds([]);
     }
-    setRolePerms(
-      new Set(selectedRole.RolePermission.map((x) => x.Permission.code))
-    );
-  }, [selectedRole]);
-
-  // تحميل أدوار المستخدم عند تغييره
-  useEffect(() => {
-    async function loadUserRoles(uid: number) {
-      try {
-        const { data } = await api.get(`/rbac/users/${uid}/roles`);
-        setUserRoleIds(new Set<number>((data ?? []).map((r: Role) => r.id)));
-      } catch {
-        setUserRoleIds(new Set());
-        toast.error("فشل تحميل أدوار المستخدم");
-      }
-    }
-    if (selectedUserId) loadUserRoles(selectedUserId);
-    else setUserRoleIds(new Set());
   }, [selectedUserId]);
 
-  function toggleLocalPerm(code: string) {
-    setRolePerms((prev) => {
-      const next = new Set(prev);
-      if (next.has(code)) next.delete(code);
-      else next.add(code);
-      return next;
-    });
-  }
-
-  async function saveRolePerms() {
-    if (!selectedRoleId) return;
-    const preventAdminSelf =
-      selectedRole?.roleName === "ADMIN" && me?.username === "admin";
-    if (preventAdminSelf) {
-      toast.error("لا يمكن تعديل صلاحيات دور ADMIN بواسطة المستخدم admin.");
-      return;
-    }
-
+  // تبديل صلاحية للدور المحدد
+  async function togglePermOnRole(code: string) {
+    if (!selectedRole) return;
     setBusy(true);
     try {
-      await api.post(`/rbac/roles/${selectedRoleId}/permissions`, {
-        permCodes: Array.from(rolePerms), // ← اسم الحقل الصحيح في الباك
+      const current = new Set(
+        selectedRole.RolePermission.map((x) => x.Permission.code)
+      );
+      if (current.has(code)) current.delete(code);
+      else current.add(code);
+      await api.post(`/rbac/roles/${selectedRole.id}/permissions`, {
+        permissions: Array.from(current),
       });
-      toast.success("تم تحديث صلاحيات الدور");
       await loadAll();
+      toast.success("تم تحديث صلاحيات الدور");
     } catch {
       toast.error("فشل تحديث صلاحيات الدور");
     } finally {
@@ -113,57 +127,136 @@ export default function RbacPage() {
     }
   }
 
-  function toggleUserRole(roleId: number) {
-    setUserRoleIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(roleId)) next.delete(roleId);
-      else next.add(roleId);
-      return next;
-    });
-  }
-
-  async function saveUserRoles() {
-    if (!selectedUserId) return;
-    const isAdminSelf = me?.username === "admin" && selectedUser?.id === me?.id;
-    if (isAdminSelf) {
-      toast.error("لا يمكن تعديل أدوارك كـ admin من هذه الواجهة.");
+  // إنشاء دور يدوي
+  async function createRole() {
+    if (!newRoleName.trim()) {
+      toast.error("اكتب اسم الدور");
       return;
     }
-
     setBusy(true);
     try {
-      await api.post(`/rbac/users/${selectedUserId}/roles`, {
-        roleIds: Array.from(userRoleIds),
+      const { data } = await api.post("/rbac/roles", {
+        roleName: newRoleName.trim(),
+        description: newRoleDesc || undefined,
       });
-      toast.success("تم تحديث أدوار المستخدم");
+      await loadAll();
+      setNewRoleName("");
+      setNewRoleDesc("");
+      setSelectedRoleId(data.id);
+      toast.success("تم إنشاء الدور");
     } catch {
-      toast.error("فشل تحديث أدوار المستخدم");
+      toast.error("فشل إنشاء الدور");
     } finally {
       setBusy(false);
     }
   }
 
-  const roleEditingDisabled =
-    busy ||
-    !selectedRoleId ||
-    (selectedRole?.roleName === "ADMIN" && me?.username === "admin");
+  // تنفيذ وصفة جاهزة (إنشاء/تحديث وربط الصلاحيات)
+  async function applyRecipe(recipe: Recipe) {
+    setBusy(true);
+    try {
+      await api.post("/rbac/recipes", {
+        roleName: recipe.roleName,
+        description: recipe.description,
+        permissions: recipe.permissions,
+      });
+      await loadAll();
+      const role = roles.find((r) => r.roleName === recipe.roleName);
+      if (role) setSelectedRoleId(role.id);
+      toast.success(`تم تطبيق وصفة ${recipe.roleName}`);
+    } catch {
+      toast.error("تعذر تطبيق الوصفة");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleUserRole(id: number) {
+    setUserRoleIds((prev) => {
+      const s = new Set(prev);
+      s.has(id) ? s.delete(id) : s.add(id);
+      return Array.from(s);
+    });
+  }
+
+  async function saveUserRoles() {
+    if (!selectedUser) return;
+    setBusy(true);
+    try {
+      await api.post(`/rbac/users/${selectedUser.id}/roles`, {
+        roleIds: userRoleIds,
+      });
+      toast.success("تم حفظ أدوار المستخدم");
+    } catch {
+      toast.error("فشل حفظ أدوار المستخدم");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <PermissionsGate one="admin.rbac">
       <div className="space-y-6" dir="rtl">
         <h1 className="text-xl font-bold">إدارة الصلاحيات والأدوار</h1>
 
-        {/* ===== صلاحيات الدور ===== */}
+        {/* ===== وصفات جاهزة ===== */}
+        <section className="bg-white dark:bg-slate-950 border dark:border-white/10 rounded-2xl p-4">
+          <div className="mb-3 font-semibold">وصفات أدوار جاهزة</div>
+          <div className="grid md:grid-cols-2 gap-3">
+            {RECIPES.map((rcp) => (
+              <div key={rcp.key} className="rounded-xl border p-3">
+                <div className="font-medium">{rcp.title}</div>
+                <div className="text-xs text-gray-500 mt-1">{rcp.description}</div>
+                <div className="text-[11px] mt-2 font-mono">
+                  {rcp.permissions.join(", ")}
+                </div>
+                <button
+                  disabled={busy}
+                  onClick={() => applyRecipe(rcp)}
+                  className="mt-3 rounded bg-emerald-600 text-white text-sm px-3 py-2 disabled:opacity-50"
+                >
+                  إنشاء/تحديث هذا الدور
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ===== إنشاء دور يدوي ===== */}
+        <section className="bg-white dark:bg-slate-950 border dark:border-white/10 rounded-2xl p-4">
+          <div className="mb-3 font-semibold">إنشاء دور جديد</div>
+          <div className="grid gap-2 sm:grid-cols-[240px_1fr_auto]">
+            <input
+              className="border rounded px-3 py-2"
+              placeholder="اسم الدور (مثلاً: VIEWER)"
+              value={newRoleName}
+              onChange={(e) => setNewRoleName(e.target.value)}
+            />
+            <input
+              className="border rounded px-3 py-2"
+              placeholder="وصف (اختياري)"
+              value={newRoleDesc}
+              onChange={(e) => setNewRoleDesc(e.target.value)}
+            />
+            <button
+              disabled={busy}
+              onClick={createRole}
+              className="rounded bg-blue-600 text-white px-4 py-2 disabled:opacity-50"
+            >
+              إنشاء الدور
+            </button>
+          </div>
+        </section>
+
+        {/* ===== اختيار الدور وتعديل صلاحياته ===== */}
         <section className="bg-white dark:bg-slate-950 border dark:border-white/10 rounded-2xl p-4">
           <div className="flex items-center gap-3 mb-4">
             <label className="text-sm">اختر دوراً:</label>
             <select
               className="border rounded px-2 py-1 bg-transparent"
-              value={selectedRoleId ?? ""}
+              value={selectedRoleId}
               onChange={(e) =>
-                setSelectedRoleId(
-                  e.target.value ? Number(e.target.value) : null
-                )
+                setSelectedRoleId(e.target.value ? Number(e.target.value) : "")
               }
             >
               <option value="">— اختر —</option>
@@ -173,65 +266,44 @@ export default function RbacPage() {
                 </option>
               ))}
             </select>
-
-            <button
-              className="ml-auto rounded bg-blue-600 text-white text-sm px-3 py-2 disabled:opacity-50"
-              disabled={roleEditingDisabled}
-              onClick={saveRolePerms}
-            >
-              حفظ الصلاحيات
-            </button>
           </div>
 
-          {selectedRoleId ? (
+          {selectedRole ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
               {perms.map((p) => {
-                const id = `perm_${p.id}`;
-                const checked = rolePerms.has(p.code);
+                const checked = selectedRole.RolePermission.some(
+                  (x) => x.Permission.code === p.code
+                );
                 return (
-                  <div
+                  <label
                     key={p.id}
                     className="flex items-center gap-2 text-sm rounded border px-3 py-2"
                   >
                     <input
-                      id={id}
                       type="checkbox"
-                      name={id}
-                      disabled={roleEditingDisabled}
+                      disabled={busy}
                       checked={checked}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        toggleLocalPerm(p.code);
-                      }}
+                      onChange={() => togglePermOnRole(p.code)}
                     />
-                    <label
-                      htmlFor={id}
-                      className="font-mono cursor-pointer select-none"
-                    >
-                      {p.code}
-                    </label>
-                  </div>
+                    <span className="font-mono">{p.code}</span>
+                  </label>
                 );
               })}
             </div>
           ) : (
-            <p className="text-sm text-gray-500">
-              اختر دوراً لعرض/تعديل صلاحياته.
-            </p>
+            <p className="text-sm text-gray-500">اختر دوراً لعرض/تعديل صلاحياته.</p>
           )}
         </section>
 
-        {/* ===== أدوار المستخدم ===== */}
+        {/* ===== تعيين أدوار لمستخدم ===== */}
         <section className="bg-white dark:bg-slate-950 border dark:border-white/10 rounded-2xl p-4">
           <div className="flex items-center gap-3 mb-4">
             <label className="text-sm">اختر مستخدماً:</label>
             <select
               className="border rounded px-2 py-1 bg-transparent"
-              value={selectedUserId ?? ""}
+              value={selectedUserId}
               onChange={(e) =>
-                setSelectedUserId(
-                  e.target.value ? Number(e.target.value) : null
-                )
+                setSelectedUserId(e.target.value ? Number(e.target.value) : "")
               }
             >
               <option value="">— اختر —</option>
@@ -241,53 +313,41 @@ export default function RbacPage() {
                 </option>
               ))}
             </select>
-
-            <button
-              className="ml-auto rounded bg-blue-600 text-white text-sm px-3 py-2 disabled:opacity-50"
-              disabled={busy || !selectedUserId}
-              onClick={saveUserRoles}
-            >
-              حفظ أدوار المستخدم
-            </button>
           </div>
 
-          {selectedUserId ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-              {roles.map((r) => {
-                const id = `role_${r.id}`;
-                const selected = userRoleIds.has(r.id);
-                const disableThis =
-                  busy ||
-                  (me?.username === "admin" &&
-                    selectedUser?.id === me?.id &&
-                    r.roleName === "ADMIN");
-                return (
-                  <div
-                    key={r.id}
-                    className="flex items-center gap-2 text-sm rounded border px-3 py-2"
-                  >
-                    <input
-                      id={id}
-                      type="checkbox"
-                      name={id}
-                      disabled={disableThis}
-                      checked={selected}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        toggleUserRole(r.id);
-                      }}
-                    />
-                    <label htmlFor={id} className="cursor-pointer select-none">
-                      {r.roleName}
+          {selectedUser ? (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {roles.map((r) => {
+                  const id = `role_${r.id}`;
+                  const checked = userRoleIds.includes(r.id);
+                  return (
+                    <label
+                      key={r.id}
+                      className="flex items-center gap-2 text-sm rounded border px-3 py-2"
+                    >
+                      <input
+                        id={id}
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleUserRole(r.id)}
+                      />
+                      <span>{r.roleName}</span>
                     </label>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+
+              <button
+                disabled={busy}
+                onClick={saveUserRoles}
+                className="mt-3 rounded bg-blue-600 text-white px-4 py-2 disabled:opacity-50"
+              >
+                حفظ أدوار المستخدم
+              </button>
+            </>
           ) : (
-            <p className="text-sm text-gray-500">
-              اختر مستخدماً لتعيين الأدوار له.
-            </p>
+            <p className="text-sm text-gray-500">اختر مستخدماً لتعيين الأدوار له.</p>
           )}
         </section>
       </div>
@@ -298,7 +358,9 @@ export default function RbacPage() {
 
 
 
-// import { useEffect, useState } from "react";
+// // src/pages/RbacPage.tsx
+
+// import { useEffect, useMemo, useState } from "react";
 // import api from "../api/apiClient";
 // import PermissionsGate from "../components/PermissionsGate";
 // import { toast } from "sonner";
@@ -311,49 +373,135 @@ export default function RbacPage() {
 //   const [perms, setPerms] = useState<Permission[]>([]);
 //   const [roles, setRoles] = useState<Role[]>([]);
 //   const [users, setUsers] = useState<User[]>([]);
-//   const [selectedRoleId, setSelectedRoleId] = useState<number | null>(null);
-//   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
-//   const [busy, setBusy] = useState(false);
+
+//   const [selectedRoleId, setSelectedRoleId] = useState<number | "">("");
+//   const [selectedUserId, setSelectedUserId] = useState<number | "">("");
+
+//   // حالة محلية للاختيارات
+//   const [selectedPermCodes, setSelectedPermCodes] = useState<Set<string>>(new Set());
+//   const [selectedUserRoleIds, setSelectedUserRoleIds] = useState<Set<number>>(new Set());
+
+//   const [busyRoleSave, setBusyRoleSave] = useState(false);
+//   const [busyUserSave, setBusyUserSave] = useState(false);
+//   const [loading, setLoading] = useState(true);
 
 //   async function loadAll() {
-//     const [p, r, u] = await Promise.all([
-//       api.get('/rbac/permissions'),
-//       api.get('/rbac/roles'),
-//       api.get('/users/list-basic'),
-//     ]);
-//     setPerms(p.data);
-//     setRoles(r.data);
-//     setUsers(u.data);
+//     setLoading(true);
+//     try {
+//       const [p, r, u] = await Promise.all([
+//         api.get("/rbac/permissions"),
+//         api.get("/rbac/roles"),
+//         api.get("/users/list-basic"),
+//       ]);
+//       setPerms(p.data);
+//       setRoles(r.data);
+//       setUsers(u.data);
+//     } catch {
+//       toast.error("فشل تحميل بيانات RBAC");
+//     } finally {
+//       setLoading(false);
+//     }
 //   }
 
-//   useEffect(() => { loadAll().catch(() => toast.error('فشل تحميل بيانات RBAC')); }, []);
+//   useEffect(() => {
+//     loadAll();
+//   }, []);
 
-//   const selectedRole = roles.find(r => r.id === selectedRoleId) || null;
-//   const selectedUser = users.find(u => u.id === selectedUserId) || null;
+//   // الدور المحدد
+//   const selectedRole = useMemo(
+//     () => (typeof selectedRoleId === "number" ? roles.find(r => r.id === selectedRoleId) ?? null : null),
+//     [roles, selectedRoleId]
+//   );
 
-//   async function togglePermOnRole(code: string) {
+//   // المستخدم المحدد
+//   const selectedUser = useMemo(
+//     () => (typeof selectedUserId === "number" ? users.find(u => u.id === selectedUserId) ?? null : null),
+//     [users, selectedUserId]
+//   );
+
+//   // عند تغيير الدور: نبني مجموعة الصلاحيات الحالية للدور
+//   useEffect(() => {
+//     if (!selectedRole) {
+//       setSelectedPermCodes(new Set());
+//       return;
+//     }
+//     const current = new Set<string>(selectedRole.RolePermission.map(x => x.Permission.code));
+//     setSelectedPermCodes(current);
+//   }, [selectedRole]);
+
+//   // عند تغيير المستخدم: نجيب أدواره الحالية
+//   useEffect(() => {
+//     async function loadUserRoles(uid: number) {
+//       try {
+//         const { data } = await api.get(`/rbac/users/${uid}/roles`);
+//         setSelectedUserRoleIds(new Set<number>(data.map((r: { id: number }) => r.id)));
+//       } catch {
+//         setSelectedUserRoleIds(new Set());
+//       }
+//     }
+//     if (typeof selectedUserId === "number") loadUserRoles(selectedUserId);
+//     else setSelectedUserRoleIds(new Set());
+//   }, [selectedUserId]);
+
+//   // تبديل صلاحية داخل الحالة المحلية
+//   function togglePerm(code: string) {
+//     setSelectedPermCodes(prev => {
+//       const next = new Set(prev);
+//       next.has(code) ? next.delete(code) : next.add(code);
+//       return next;
+//     });
+//   }
+
+//   // حفظ صلاحيات الدور
+//   async function saveRolePermissions() {
 //     if (!selectedRole) return;
-//     setBusy(true);
+//     setBusyRoleSave(true);
 //     try {
-//       const current = new Set(selectedRole.RolePermission.map(x => x.Permission.code));
-//       if (current.has(code)) current.delete(code); else current.add(code);
-//       await api.post(`/rbac/roles/${selectedRole.id}/permissions`, { permissions: Array.from(current) });
-//       await loadAll();
-//       toast.success('تم تحديث صلاحيات الدور');
-//     } catch {
-//       toast.error('فشل تحديث صلاحيات الدور');
-//     } finally { setBusy(false); }
+//       await api.post(`/rbac/roles/${selectedRole.id}/permissions`, {
+//         permissions: Array.from(selectedPermCodes),
+//       });
+//       toast.success("تم حفظ صلاحيات الدور");
+//       await loadAll(); // لتزامن العرض مع السيرفر
+//     } catch (e: any) {
+//       const msg = e?.response?.data?.message || "فشل حفظ صلاحيات الدور";
+//       toast.error(msg);
+//     } finally {
+//       setBusyRoleSave(false);
+//     }
 //   }
 
-//   async function setUserRoles(roleIds: number[]) {
+//   // تبديل دور للمستخدم داخل الحالة المحلية
+//   function toggleUserRole(id: number) {
+//     setSelectedUserRoleIds(prev => {
+//       const next = new Set(prev);
+//       next.has(id) ? next.delete(id) : next.add(id);
+//       return next;
+//     });
+//   }
+
+//   // حفظ أدوار المستخدم
+//   async function saveUserRoles() {
 //     if (!selectedUser) return;
-//     setBusy(true);
+//     setBusyUserSave(true);
 //     try {
-//       await api.post(`/rbac/users/${selectedUser.id}/roles`, { roleIds });
-//       toast.success('تم تحديث أدوار المستخدم');
-//     } catch {
-//       toast.error('فشل تحديث أدوار المستخدم');
-//     } finally { setBusy(false); }
+//       await api.post(`/rbac/users/${selectedUser.id}/roles`, {
+//         roleIds: Array.from(selectedUserRoleIds),
+//       });
+//       toast.success("تم حفظ أدوار المستخدم");
+//     } catch (e: any) {
+//       const msg = e?.response?.data?.message || "فشل حفظ أدوار المستخدم";
+//       toast.error(msg);
+//     } finally {
+//       setBusyUserSave(false);
+//     }
+//   }
+
+//   if (loading) {
+//     return (
+//       <div className="p-6 text-sm text-gray-500" dir="rtl">
+//         ...جاري التحميل
+//       </div>
+//     );
 //   }
 
 //   return (
@@ -367,25 +515,37 @@ export default function RbacPage() {
 //             <label className="text-sm">اختر دوراً:</label>
 //             <select
 //               className="border rounded px-2 py-1 bg-transparent"
-//               value={selectedRoleId ?? ''}
-//               onChange={(e) => setSelectedRoleId(e.target.value ? Number(e.target.value) : null)}
+//               value={selectedRoleId}
+//               onChange={(e) => {
+//                 const v = e.target.value;
+//                 setSelectedRoleId(v ? Number(v) : "");
+//               }}
 //             >
 //               <option value="">— اختر —</option>
 //               {roles.map(r => <option key={r.id} value={r.id}>{r.roleName}</option>)}
 //             </select>
+
+//             <button
+//               onClick={saveRolePermissions}
+//               disabled={!selectedRole || busyRoleSave}
+//               className="rounded bg-blue-600 text-white text-sm px-3 py-2 disabled:opacity-50"
+//             >
+//               حفظ الصلاحيات
+//             </button>
 //           </div>
 
 //           {selectedRole ? (
 //             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
 //               {perms.map(p => {
-//                 const checked = selectedRole.RolePermission.some(x => x.Permission.code === p.code);
+//                 const id = `perm_${p.id}`;
+//                 const checked = selectedPermCodes.has(p.code);
 //                 return (
-//                   <label key={p.id} className="flex items-center gap-2 text-sm rounded border px-3 py-2">
+//                   <label key={p.id} htmlFor={id} className="flex items-center gap-2 text-sm rounded border px-3 py-2">
 //                     <input
+//                       id={id}
 //                       type="checkbox"
-//                       disabled={busy}
 //                       checked={checked}
-//                       onChange={() => togglePermOnRole(p.code)}
+//                       onChange={() => togglePerm(p.code)}
 //                     />
 //                     <span className="font-mono">{p.code}</span>
 //                   </label>
@@ -393,7 +553,7 @@ export default function RbacPage() {
 //               })}
 //             </div>
 //           ) : (
-//             <p className="text-sm text-gray-500">اختر دوراً لعرض/تعديل صلاحياته.</p>
+//             <p className="text-sm text-gray-500">اختر دوراً لعرض/تعديل صلاحياته ثم اضغط “حفظ الصلاحيات”.</p>
 //           )}
 //         </section>
 
@@ -403,48 +563,49 @@ export default function RbacPage() {
 //             <label className="text-sm">اختر مستخدماً:</label>
 //             <select
 //               className="border rounded px-2 py-1 bg-transparent"
-//               value={selectedUserId ?? ''}
-//               onChange={(e) => setSelectedUserId(e.target.value ? Number(e.target.value) : null)}
+//               value={selectedUserId}
+//               onChange={(e) => {
+//                 const v = e.target.value;
+//                 setSelectedUserId(v ? Number(v) : "");
+//               }}
 //             >
 //               <option value="">— اختر —</option>
 //               {users.map(u => <option key={u.id} value={u.id}>{u.fullName}</option>)}
 //             </select>
+
+//             <button
+//               onClick={saveUserRoles}
+//               disabled={!selectedUser || busyUserSave}
+//               className="rounded bg-blue-600 text-white text-sm px-3 py-2 disabled:opacity-50"
+//             >
+//               حفظ أدوار المستخدم
+//             </button>
 //           </div>
 
 //           {selectedUser ? (
-//             <div className="space-y-2">
-//               <div className="text-sm">عيّن الأدوار:</div>
-//               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-//                 {roles.map(r => {
-//                   // مبدئيًا لا نسترجع أدوار المستخدم، لكنها تعمل كتعيين شامل عند الضغط “تأكيد”
-//                   // يمكن لاحقًا جلب GET /rbac/users/:id/roles لمزامنة الحالة الأولية.
-//                   const [selected, setSelected] = [false, (_: boolean)=>{}]; // اختصار لواجهة مبسطة
-//                   return (
-//                     <label key={r.id} className="flex items-center gap-2 text-sm rounded border px-3 py-2">
-//                       <input type="checkbox" defaultChecked={selected} onChange={()=>{}} />
-//                       <span>{r.roleName}</span>
-//                     </label>
-//                   );
-//                 })}
-//               </div>
-//               <button
-//                 className="mt-2 rounded bg-blue-600 text-white text-sm px-3 py-2 disabled:opacity-50"
-//                 disabled={busy}
-//                 onClick={() => {
-//                   // في النسخة البسيطة: نختار كل الأدوار المعروضة (كمثال تعيين شامل)
-//                   // غيّر هذا لاحقًا لقراءة حالات checkboxes الفعلية.
-//                   const allRoleIds = roles.map(r => r.id);
-//                   setUserRoles(allRoleIds);
-//                 }}
-//               >
-//                 تأكيد التعيين (نموذج أولي)
-//               </button>
+//             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+//               {roles.map(r => {
+//                 const id = `role_${r.id}`;
+//                 const checked = selectedUserRoleIds.has(r.id);
+//                 return (
+//                   <label key={r.id} htmlFor={id} className="flex items-center gap-2 text-sm rounded border px-3 py-2">
+//                     <input
+//                       id={id}
+//                       type="checkbox"
+//                       checked={checked}
+//                       onChange={() => toggleUserRole(r.id)}
+//                     />
+//                     <span>{r.roleName}</span>
+//                   </label>
+//                 );
+//               })}
 //             </div>
 //           ) : (
-//             <p className="text-sm text-gray-500">اختر مستخدماً لتعيين الأدوار له.</p>
+//             <p className="text-sm text-gray-500">اختر مستخدماً، علِّم أدواره، ثم اضغط “حفظ أدوار المستخدم”.</p>
 //           )}
 //         </section>
 //       </div>
 //     </PermissionsGate>
 //   );
 // }
+
