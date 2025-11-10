@@ -1,19 +1,22 @@
-# Frontend (Vite) - Dev
+# archive-frontend/Dockerfile.dev
+
 FROM node:20-alpine
 
 WORKDIR /app
 
-# استخدم pnpm (موجود مع corepack)
-RUN corepack enable
+# فعل pnpm
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 
-# نسخ ملفات التعريف أولاً لتحسين الكاش
+# ننسخ manifest فقط لتسريع layer cache
 COPY package.json pnpm-lock.yaml* ./
 
+# تثبيت مبدئي داخل الصورة (قد يُغَطّى بالـ volume، لكن يبقى مفيد للـ cache)
 RUN pnpm install
 
-# الآن باقي السورس
+# ننسخ باقي السورس (لن يؤثر وقت التشغيل لأننا بنعمل bind-mount)
 COPY . .
 
 EXPOSE 5173
 
-# ملاحظة: الأمر النهائي يمر من docker-compose (pnpm dev --host ...)
+# سكربت ذكي: لو node_modules فاضي (volume جديد) → pnpm install، ثم شغل Vite
+CMD [ "sh", "-lc", "test -f node_modules/.bin/vite || pnpm install && pnpm dev --host 0.0.0.0 --port 5173" ]

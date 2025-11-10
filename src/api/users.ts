@@ -1,4 +1,5 @@
 // src/api/users.ts
+
 import api from "./apiClient";
 
 export type UserSummary = {
@@ -9,8 +10,23 @@ export type UserSummary = {
   isActive?: boolean;
 };
 
+type CreateUserPayload = {
+  fullName: string;
+  username: string;
+  email?: string;
+  password?: string;
+  departmentId?: number | null;
+  isActive?: boolean;
+  roleIds?: number[];
+};
+
+type CreateUserResponse = {
+  userId: number;
+  tempPassword?: string;
+};
+
 function unwrap<T = any>(payload: any): T {
-  if (!payload) return payload;
+  if (!payload) return payload as T;
   if (typeof payload === "object" && "success" in payload) {
     return (payload.success ? payload.data : null) as T;
   }
@@ -30,13 +46,12 @@ export async function listUsers(params?: {
 
   const path = query.toString() ? `?${query}` : "";
   const res = await api.get(`/users${path}`).catch(() => api.get(`/users/list${path}`));
-
   const data = unwrap<any>(res.data);
 
   const arr =
     (Array.isArray(data?.items) ? data.items : null) ??
     (Array.isArray(data?.users) ? data.users : null) ??
-    (Array.isArray(data) ? data : []) ;
+    (Array.isArray(data) ? data : []);
 
   return arr.map((u: any, i: number) => {
     const composedName = `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim();
@@ -84,10 +99,38 @@ export async function getUserById(userId: number): Promise<UserSummary | null> {
   };
 }
 
+export async function createUser(payload: CreateUserPayload): Promise<CreateUserResponse> {
+  const { data } = await api.post("/users", payload);
+  return unwrap<CreateUserResponse>(data);
+}
+
+export async function resetUserPassword(userId: number, newPassword: string): Promise<{ ok: true }> {
+  const { data } = await api.post(`/users/${userId}/reset-password`, { newPassword });
+  return unwrap<{ ok: true }>(data);
+}
+
+// تغيير كلمة مرور المستخدم الحالي (Self-service)
+export async function changeOwnPassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<{ ok: true }> {
+  // لو مسارك في الباك مختلف، عدّل هذا فقط:
+  // شائع: POST /auth/change-password { currentPassword, newPassword }
+  const { data } = await api.post("/auth/change-password", {
+    currentPassword,
+    newPassword,
+  });
+  // بعض البواك تعيد { success: true } أو { ok: true }؛ دالة unwrap تتكفل بالأمر
+  return unwrap<{ ok: true }>(data) ?? { ok: true };
+}
+
+
 
 
 
 // // src/api/users.ts
+
+
 // import api from "./apiClient";
 
 // export type UserSummary = {
@@ -98,13 +141,12 @@ export async function getUserById(userId: number): Promise<UserSummary | null> {
 //   isActive?: boolean;
 // };
 
-// // تفكيك مرن لاستجابات الـAPI
 // function unwrap<T = any>(payload: any): T {
 //   if (!payload) return payload;
 //   if (typeof payload === "object" && "success" in payload) {
 //     return (payload.success ? payload.data : null) as T;
 //   }
-//   if ("data" in payload) return payload.data as T;
+//   if ("data" in (payload ?? {})) return (payload as any).data as T;
 //   return payload as T;
 // }
 
@@ -117,12 +159,14 @@ export async function getUserById(userId: number): Promise<UserSummary | null> {
 //   if (params?.search) query.set("search", params.search);
 //   if (params?.page) query.set("page", String(params.page));
 //   if (params?.pageSize) query.set("pageSize", String(params.pageSize));
-
 //   const path = query.toString() ? `?${query}` : "";
 //   const res = await api.get(`/users${path}`).catch(() => api.get(`/users/list${path}`));
-
 //   const data = unwrap<any>(res.data);
-//   const arr = Array.isArray(data?.items) ? data.items : (Array.isArray(data) ? data : []);
+
+//   const arr =
+//     (Array.isArray(data?.items) ? data.items : null) ??
+//     (Array.isArray(data?.users) ? data.users : null) ??
+//     (Array.isArray(data) ? data : []);
 
 //   return arr.map((u: any, i: number) => {
 //     const composedName = `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim();
@@ -169,3 +213,28 @@ export async function getUserById(userId: number): Promise<UserSummary | null> {
 //     isActive: typeof u.isActive === "boolean" ? u.isActive : true,
 //   };
 // }
+
+// // ---- إضافات جديدة ----
+// export async function createUserApi(payload: {
+//   fullName: string;
+//   username: string;
+//   email?: string;
+//   password?: string;
+//   departmentId?: number;
+//   isActive?: boolean;
+//   roleIds?: number[];
+// }): Promise<{ userId: number; tempPassword?: string | undefined }> {
+//   const { data } = await api.post("/users", payload);
+//   return data;
+// }
+
+// export async function adminResetToTemporary(userId: number): Promise<{ ok: true; tempPassword: string }> {
+//   const { data } = await api.post(`/users/${userId}/reset-to-temporary`, {});
+//   return data;
+// }
+
+// export async function changeOwnPassword(currentPassword: string, newPassword: string) {
+//   const { data } = await api.patch(`/users/change-password`, { currentPassword, newPassword });
+//   return data;
+// }
+
