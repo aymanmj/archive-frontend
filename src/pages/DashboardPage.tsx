@@ -49,45 +49,115 @@ export default function DashboardPage() {
   const outT = data?.totals?.outgoing;
 
   // دمج سلسلتين على محور واحد حتى لو اختلف الطول/التواريخ
+  // const merged30 = useMemo(() => {
+  //   const inc = data?.series30?.incoming ?? [];
+  //   const out = data?.series30?.outgoing ?? [];
+  //   const keys = new Set<string>();
+  //   inc.forEach(p => keys.add(p.date));
+  //   out.forEach(p => keys.add(p.date));
+  //   const labels = Array.from(keys).sort(); // تصاعدي
+  //   const incMap = new Map(inc.map(p => [p.date, p.count]));
+  //   const outMap = new Map(out.map(p => [p.date, p.count]));
+  //   return {
+  //     labels: labels.map(d => d.slice(5)), // MM-DD
+  //     incArr: labels.map(d => incMap.get(d) ?? 0),
+  //     outArr: labels.map(d => outMap.get(d) ?? 0),
+  //   };
+  // }, [data]);
+
   const merged30 = useMemo(() => {
     const inc = data?.series30?.incoming ?? [];
     const out = data?.series30?.outgoing ?? [];
-    const keys = new Set<string>();
-    inc.forEach(p => keys.add(p.date));
-    out.forEach(p => keys.add(p.date));
-    const labels = Array.from(keys).sort(); // تصاعدي
+
+    const keys = Array.from(new Set<string>([
+      ...inc.map(p => p.date),
+      ...out.map(p => p.date),
+    ])).sort(); // YYYY-MM-DD تصاعدي
+
     const incMap = new Map(inc.map(p => [p.date, p.count]));
     const outMap = new Map(out.map(p => [p.date, p.count]));
-    return {
-      labels: labels.map(d => d.slice(5)), // MM-DD
-      incArr: labels.map(d => incMap.get(d) ?? 0),
-      outArr: labels.map(d => outMap.get(d) ?? 0),
-    };
+
+    // مرساة صفرية: يوم واحد قبل أول تاريخ
+    const firstISO = keys[0];
+    const anchorISO = firstISO
+      ? new Date(new Date(firstISO).getTime() - 24 * 60 * 60 * 1000)
+          .toISOString().slice(0, 10)
+      : null;
+
+    const labelsFull = anchorISO ? [anchorISO, ...keys] : keys;
+    const labelsShort = labelsFull.map(d => d.slice(5)); // MM-DD
+
+    const incArr = labelsFull.map(d => (d === anchorISO ? 0 : (incMap.get(d) ?? 0)));
+    const outArr = labelsFull.map(d => (d === anchorISO ? 0 : (outMap.get(d) ?? 0)));
+
+    return { labels: labelsShort, incArr, outArr };
   }, [data]);
 
-  const totalsChart = useMemo(() => ({
-    labels: ['اليوم', 'هذا الأسبوع', 'هذا الشهر', 'الإجمالي'],
-    datasets: [
-      {
-        label: 'الوارد',
-        data: [incT?.today ?? 0, incT?.last7Days ?? 0, incT?.thisMonth ?? 0, incT?.all ?? 0],
-        fill: false,
-        borderColor: 'rgba(2,132,199,1)',
-        backgroundColor: 'rgba(2,132,199,0.15)',
-        tension: 0.2,
-        pointRadius: 3
-      },
-      {
-        label: 'الصادر',
-        data: [outT?.today ?? 0, outT?.last7Days ?? 0, outT?.thisMonth ?? 0, outT?.all ?? 0],
-        fill: false,
-        borderColor: 'rgba(124,58,237,1)',
-        backgroundColor: 'rgba(124,58,237,0.15)',
-        tension: 0.2,
-        pointRadius: 3
-      },
-    ],
-  }), [incT, outT]);
+  // const totalsChart = useMemo(() => ({
+  //   labels: ['اليوم', 'هذا الأسبوع', 'هذا الشهر', 'الإجمالي'],
+  //   datasets: [
+  //     {
+  //       label: 'الوارد',
+  //       data: [incT?.today ?? 0, incT?.last7Days ?? 0, incT?.thisMonth ?? 0, incT?.all ?? 0],
+  //       fill: false,
+  //       borderColor: 'rgba(2,132,199,1)',
+  //       backgroundColor: 'rgba(2,132,199,0.15)',
+  //       tension: 0.2,
+  //       pointRadius: 3
+  //     },
+  //     {
+  //       label: 'الصادر',
+  //       data: [outT?.today ?? 0, outT?.last7Days ?? 0, outT?.thisMonth ?? 0, outT?.all ?? 0],
+  //       fill: false,
+  //       borderColor: 'rgba(124,58,237,1)',
+  //       backgroundColor: 'rgba(124,58,237,0.15)',
+  //       tension: 0.2,
+  //       pointRadius: 3
+  //     },
+  //   ],
+  // }), [incT, outT]);
+
+  const totalsChart = useMemo(() => {
+    const incVals = [incT?.today ?? 0, incT?.last7Days ?? 0, incT?.thisMonth ?? 0, incT?.all ?? 0];
+    const outVals = [outT?.today ?? 0, outT?.last7Days ?? 0, outT?.thisMonth ?? 0, outT?.all ?? 0];
+
+    return {
+      labels: [' ', 'اليوم', 'هذا الأسبوع', 'هذا الشهر', 'الإجمالي'],
+      datasets: [
+        {
+          label: 'الوارد',
+          data: [0, ...incVals],          // 👈 صفر كبداية
+          fill: false,
+          borderColor: 'rgba(2,132,199,1)',
+          backgroundColor: 'rgba(2,132,199,0.15)',
+          tension: 0.2,
+          pointRadius: 3
+        },
+        {
+          label: 'الصادر',
+          data: [0, ...outVals],          // 👈 صفر كبداية
+          fill: false,
+          borderColor: 'rgba(124,58,237,1)',
+          backgroundColor: 'rgba(124,58,237,0.15)',
+          tension: 0.2,
+          pointRadius: 3
+        },
+      ],
+    };
+  }, [incT, outT]);
+
+
+  // const totalsOptions = {
+  //   responsive: true,
+  //   plugins: {
+  //     legend: { position: 'top' as const },
+  //     tooltip: { mode: 'index' as const, intersect: false },
+  //   },
+  //   scales: {
+  //     x: { beginAtZero: true },
+  //     y: { beginAtZero: true, ticks: { precision: 0 } },
+  //   },
+  // };
 
   const totalsOptions = {
     responsive: true,
@@ -97,7 +167,11 @@ export default function DashboardPage() {
     },
     scales: {
       x: { beginAtZero: true },
-      y: { beginAtZero: true, ticks: { precision: 0 } },
+      y: {
+        beginAtZero: true,
+        min: 0,                 // 👈 إجبار البداية من 0
+        ticks: { precision: 0, stepSize: 1 },
+      },
     },
   };
 
@@ -125,6 +199,17 @@ export default function DashboardPage() {
     ]
   }), [merged30]);
 
+  // const lineOptions = {
+  //   responsive: true,
+  //   maintainAspectRatio: false,
+  //   plugins: { legend: { position: "top" as const } },
+  //   interaction: { mode: "index" as const, intersect: false },
+  //   scales: {
+  //     x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 10 } },
+  //     y: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } }
+  //   }
+  // };
+
   const lineOptions = {
     responsive: true,
     maintainAspectRatio: false,
@@ -132,8 +217,12 @@ export default function DashboardPage() {
     interaction: { mode: "index" as const, intersect: false },
     scales: {
       x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 10 } },
-      y: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } }
-    }
+      y: {
+        beginAtZero: true,
+        min: 0,                 // 👈 إجبار البداية من 0
+        ticks: { stepSize: 1, precision: 0 },
+      },
+    },
   };
 
   const doughnutData = data ? {
