@@ -1,0 +1,19 @@
+# Frontend (Vite) - Dev
+FROM node:20-alpine
+
+WORKDIR /app
+
+# استخدم pnpm (موجود مع corepack)
+RUN corepack enable
+
+# نسخ ملفات التعريف أولاً لتحسين الكاش
+COPY package.json pnpm-lock.yaml* ./
+
+RUN pnpm install
+
+# الآن باقي السورس
+COPY . .
+
+EXPOSE 5173
+
+# ملاحظة: الأمر النهائي يمر من docker-compose (pnpm dev --host ...)

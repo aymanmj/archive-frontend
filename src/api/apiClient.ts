@@ -4,17 +4,38 @@ import axios from "axios";
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "http://localhost:3000",
-  // لا نحتاج withCredentials لأننا نعمل بالـ Bearer token
   withCredentials: false,
 });
 
-// ألحق التوكن على كل الطلبات
+// ألحق التوكن + اسم المحطة + المنطقة الزمنية على كل الطلبات
 api.interceptors.request.use((config) => {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   if (token) {
     config.headers = config.headers ?? {};
     config.headers.Authorization = `Bearer ${token}`;
   }
+
+  // اسم المحطة (يمكنك تغييره من الواجهة وحفظه في localStorage)
+  const ws =
+    (typeof window !== "undefined" && localStorage.getItem("workstationName")) ||
+    (typeof navigator !== "undefined" && navigator.userAgent
+      ? `WebClient:${navigator.userAgent.slice(0, 40)}`
+      : undefined);
+
+  if (ws) {
+    (config.headers as any)["X-Workstation"] = ws;
+  }
+
+  // المنطقة الزمنية للعميل (اختياري مفيد للسجلات)
+  const tz =
+    typeof Intl !== "undefined"
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : "UTC";
+  (config.headers as any)["X-Client-Timezone"] = tz;
+
+  // (اختياري) للدلالة أن الطلب من XHR
+  (config.headers as any)["X-Requested-With"] = "XMLHttpRequest";
+
   return config;
 });
 
@@ -22,58 +43,25 @@ export default api;
 
 
 
-// // src/apiClient.ts
+// // src/api/apiClient.ts
 
 // import axios from "axios";
-// import { useAuthStore } from "../stores/authStore"; // ✅ كان ../stores — صُحّح
-
-// const baseURL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
 
 // const api = axios.create({
-//   baseURL,
+//   baseURL: import.meta.env.VITE_API_URL || "http://localhost:3000",
+//   // لا نحتاج withCredentials لأننا نعمل بالـ Bearer token
 //   withCredentials: false,
 // });
 
+// // ألحق التوكن على كل الطلبات
 // api.interceptors.request.use((config) => {
-//   const token =
-//     useAuthStore.getState().token ??
-//     (typeof window !== "undefined" ? localStorage.getItem("token") : null);
-
-//   config.headers = config.headers ?? {};
-
+//   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
 //   if (token) {
-//     (config.headers as any).Authorization = `Bearer ${token}`;
+//     config.headers = config.headers ?? {};
+//     config.headers.Authorization = `Bearer ${token}`;
 //   }
-
-//   // اترك المتصفح يحدد Content-Type تلقائيًا عندما تكون البيانات FormData
-//   if (typeof FormData !== "undefined" && config.data instanceof FormData) {
-//     if ("Content-Type" in (config.headers as any)) {
-//       delete (config.headers as any)["Content-Type"];
-//     }
-//   } else {
-//     if (!(config.headers as any)["Content-Type"]) {
-//       (config.headers as any)["Content-Type"] = "application/json";
-//     }
-//   }
-
 //   return config;
 // });
 
-// api.interceptors.response.use(
-//   (r) => r,
-//   (err) => {
-//     if (err?.response?.status === 401) {
-//       try {
-//         useAuthStore.getState().logout();
-//       } catch {}
-//       if (typeof window !== "undefined") {
-//         window.location.replace("/");
-//       }
-//     }
-//     return Promise.reject(err);
-//   }
-// );
-
 // export default api;
-
 
