@@ -124,6 +124,80 @@ export async function changeOwnPassword(
   return unwrap<{ ok: true }>(data) ?? { ok: true };
 }
 
+// ===== Password reset (admin-initiated) =====
+export async function initiatePasswordReset(userId: number, ttlMinutes?: number)
+: Promise<{ url: string; expiresAt: string }> {
+  const res = await api.post('/auth/reset/initiate', { userId, ttlMinutes });
+  return res.data;
+}
+
+// ===== Password reset (user completes with token) =====
+export async function completePasswordReset(token: string, newPassword: string) {
+  const res = await api.post('/auth/reset/complete', { token, newPassword });
+  return res.data;
+}
+
+/////////
+
+
+// (أ) للإدمن: إصدار رابط/رمز إعادة تعيين لمستخدم محدد
+export async function issuePasswordResetForUser(userId: number) {
+  // الـ backend عندك يعيد { url, expiresAt }
+  const { data } = await api.post("/auth/reset/initiate", { userId });
+  return data as { url?: string; expiresAt: string };
+}
+
+// (ب) (غير مدعوم في باك إندك الحالي) — عطّله بوضوح
+export async function requestPasswordResetByUsername(_username: string) {
+  throw new Error("ميزة إصدار رابط عبر اسم المستخدم غير مفعّلة على الخادوم.");
+}
+
+// (ج) استهلاك الرمز لتعيين كلمة مرور جديدة (بدون تسجيل دخول)
+export async function consumePasswordReset(token: string, newPassword: string) {
+  const { data } = await api.post("/auth/reset/complete", { token, newPassword });
+  return data;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// /* ===== إدارة كلمات المرور ===== */
+
+// // (أ) للإدمن: إصدار رابط/رمز إعادة تعيين لمستخدم محدد
+// export async function issuePasswordResetForUser(userId: number) {
+//   const { data } = await api.post("/auth/password-resets/issue", { userId });
+//   // نتوقع { token, expiresAt, url? }
+//   return data as { token: string; expiresAt: string; url?: string };
+// }
+
+// // (ب) للواجهة العامة: طلب إعادة تعيين عبر اسم المستخدم (نسيت كلمة المرور)
+// export async function requestPasswordResetByUsername(username: string) {
+//   const { data } = await api.post("/auth/password-resets/request", { username });
+//   return data as { token: string; expiresAt: string; url?: string };
+// }
+
+// // (ج) استهلاك الرمز لتعيين كلمة مرور جديدة (بدون تسجيل دخول)
+// export async function consumePasswordReset(token: string, newPassword: string) {
+//   const { data } = await api.post("/auth/password-resets/consume", { token, newPassword });
+//   return data;
+// }
+
 
 
 

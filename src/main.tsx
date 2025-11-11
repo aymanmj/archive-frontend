@@ -21,6 +21,8 @@ import RbacPage from './pages/RbacPage';
 import UsersAdminPage from './pages/UsersAdminPage';
 import AuditPage from "./pages/AuditPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
+
 
 // ⬇️ مزوّد الصلاحيات
 import { PermissionsProvider } from './permissions/PermissionsContext';
@@ -35,6 +37,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <AppInitializer>
           <Routes>
             <Route path="/" element={<LoginPage />} />
+            <Route path="/reset" element={<ResetPasswordPage />} />
 
             {/* كل المسارات المحمية داخل Layout واحد */}
             <Route element={<ProtectedRoute />}>
