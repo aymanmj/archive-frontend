@@ -1,24 +1,22 @@
 # ---------- builder ----------
 FROM node:20-alpine AS builder
 WORKDIR /app
-
-# pnpm
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 
-# انسخ ملفات التعريف أولاً ليُحترم الـ cache
-COPY package.json pnpm-lock.yaml* ./
 
-# ثبّت الحزم (مع devDeps) مرة واحدة
+# ✅ التقط build arg من compose
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=${VITE_API_URL}
+
+
+# نستخدم الـ cache صح
+COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile || pnpm install
 
-# الآن انسخ بقية السورس
+# الآن السورس
 COPY . .
 
-# إذا كنت تحتاج تمرير VITE_API_URL كـ build-arg (اختياري)
-ARG VITE_API_URL=/api
-ENV VITE_API_URL=$VITE_API_URL
-
-# بناء (نفّذ الثنائيات عبر pnpm exec)
+# ابنِ (tsc/vite من خلال pnpm exec ليشتغل حتى لو bin غير مضاف في PATH)
 RUN pnpm exec vite --version
 RUN pnpm exec vite build
 
@@ -26,9 +24,11 @@ RUN pnpm exec vite build
 FROM nginx:1.25-alpine AS web
 WORKDIR /usr/share/nginx/html
 RUN rm -rf ./*
+
+# نسخ الملفات المبنية
 COPY --from=builder /app/dist ./
 
-# ⬅️ أهم سطر: نركّب كونفج Nginx الخاص بالإنتاج مكان default
+# إعداد nginx
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
