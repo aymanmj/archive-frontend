@@ -18,6 +18,10 @@ type Dist = {
   assignedToUserName: string|null;
   lastUpdateAt: string;
   notes: string|null;
+  // SLA
+  dueAt: string | null;
+  priority: number;
+  escalationCount: number;
 };
 
 type Details = {
@@ -46,16 +50,17 @@ type Details = {
   distributions: Dist[];
 };
 
+// متوافق مع شكل /incoming/:id/timeline
 type TimelineItem = {
-  type: "file" | "distribution" | "audit";
   at: string;
-  title: string;
-  by?: string;
-  details?: string;
-  link?: string;
+  actionType?: string;
+  actionLabel?: string; // نستخدمه في العنوان
+  by?: string | null;
+  details?: string | null;
+  link?: string | null;
 };
 
-function fmtDT(v?: string) {
+function fmtDT(v?: string | null) {
   if (!v) return "—";
   const d = new Date(v);
   if (isNaN(d.getTime())) return "—";
@@ -63,6 +68,20 @@ function fmtDT(v?: string) {
     year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit",
   });
+}
+
+function fmtDateInputValue(v?: string | null) {
+  // لتحويل ISO إلى قيمة input[type="datetime-local"]
+  if (!v) return "";
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  const MM = pad(d.getMonth()+1);
+  const dd = pad(d.getDate());
+  const hh = pad(d.getHours());
+  const mm = pad(d.getMinutes());
+  return `${yyyy}-${MM}-${dd}T${hh}:${mm}`;
 }
 
 const errMsg = (e: any) =>
@@ -78,7 +97,7 @@ export default function IncomingDetailsPage() {
   const [details, setDetails] = useState<Details | null>(null);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"overview"|"forward"|"assign"|"files"|"timeline">("overview");
+  const [tab, setTab] = useState<"overview"|"forward"|"assign"|"files"|"timeline"|"sla">("overview");
 
   // ملفات (معاينة)
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -97,6 +116,9 @@ export default function IncomingDetailsPage() {
   const [fwdUser, setFwdUser] = useState<string>("");
   const [fwdClosePrev, setFwdClosePrev] = useState(true);
   const [fwdNote, setFwdNote] = useState("");
+  // دعم SLA في الإحالة (اختياري)
+  const [fwdDueAt, setFwdDueAt] = useState<string>(""); // datetime-local
+  const [fwdPriority, setFwdPriority] = useState<number>(0);
 
   // تبويب التعيين
   const [assignDept, setAssignDept] = useState<string>("");
@@ -111,6 +133,10 @@ export default function IncomingDetailsPage() {
   const [plainNote, setPlainNote]   = useState("");
   const [busy, setBusy] = useState(false);
 
+  // تبويب SLA
+  const [slaDueAt, setSlaDueAt] = useState<string>("");       // datetime-local
+  const [slaPriority, setSlaPriority] = useState<number>(0);  // 0..N
+
   // تحميل البيانات الأساسية
   useEffect(() => {
     (async () => {
@@ -123,12 +149,17 @@ export default function IncomingDetailsPage() {
           api.get<Department[]>('/departments', { params: { status: 'Active' } }),
         ]);
         setDetails(det.data);
-        setTimeline(tl.data.items ?? []);
+        setTimeline(Array.isArray(tl.data.items) ? tl.data.items : []);
         setDepartments(Array.isArray(deps.data) ? deps.data : []);
+
         const auto =
           det.data.distributions?.find(d => d.status==="Open" || d.status==="InProgress")
           ?? det.data.distributions?.[0];
-        if (auto) setSelectedDistId(auto.id);
+        if (auto) {
+          setSelectedDistId(auto.id);
+          setSlaDueAt(fmtDateInputValue(auto.dueAt));
+          setSlaPriority(Number.isFinite(auto.priority) ? auto.priority : 0);
+        }
       } catch {
         toast.error("تعذّر تحميل التفاصيل");
       }
@@ -168,6 +199,14 @@ export default function IncomingDetailsPage() {
     })();
   }, [assignDept]);
 
+  // عند تغيير التوزيع المختار: عبّئ قيم SLA الحالية في النموذج
+  useEffect(() => {
+    if (!details || !selectedDistId) return;
+    const d = details.distributions.find(x => x.id === selectedDistId);
+    setSlaDueAt(fmtDateInputValue(d?.dueAt ?? null));
+    setSlaPriority(Number.isFinite(d?.priority ?? 0) ? (d?.priority ?? 0) : 0);
+  }, [selectedDistId, details]);
+
   const refreshDetails = async () => {
     if (!id) return;
     try {
@@ -175,11 +214,11 @@ export default function IncomingDetailsPage() {
       setDetails(det.data);
       if (det.data.distributions?.length) {
         const keep = det.data.distributions.find(d => d.id === selectedDistId);
-        if (!keep) {
-          const auto =
-            det.data.distributions.find(d => d.status==="Open" || d.status==="InProgress")
-            ?? det.data.distributions[0];
-          if (auto) setSelectedDistId(auto.id);
+        const active = keep ?? det.data.distributions.find(d => d.status==="Open" || d.status==="InProgress") ?? det.data.distributions[0];
+        if (active) {
+          setSelectedDistId(active.id);
+          setSlaDueAt(fmtDateInputValue(active.dueAt));
+          setSlaPriority(Number.isFinite(active.priority) ? active.priority : 0);
         }
       } else {
         setSelectedDistId("");
@@ -202,6 +241,9 @@ export default function IncomingDetailsPage() {
           assignedToUserId: fwdUser ? Number(fwdUser) : undefined,
           note: fwdNote || null,
           closePrevious: !!fwdClosePrev,
+          // SLA (اختياريان)
+          dueAt: fwdDueAt ? new Date(fwdDueAt).toISOString() : null,
+          priority: Number.isFinite(fwdPriority) ? fwdPriority : 0,
         }),
         {
           loading: "جاري تنفيذ الإحالة...",
@@ -289,6 +331,28 @@ export default function IncomingDetailsPage() {
     }
   };
 
+  const submitSLA = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedDistId) return toast.warning("اختر التوزيع أولًا");
+    setBusy(true);
+    try {
+      await toast.promise(
+        api.patch(`/incoming/distributions/${selectedDistId}/sla`, {
+          dueAt: slaDueAt ? new Date(slaDueAt).toISOString() : null,
+          priority: Number.isFinite(slaPriority) ? slaPriority : 0,
+        }),
+        {
+          loading: "جاري تحديث الـ SLA...",
+          success: "تم تحديث الـ SLA",
+          error: (e) => errMsg(e),
+        }
+      );
+      await refreshDetails();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const openPreview = (f: PreviewFile) => {
     setPreviewFile(f);
     setPreviewOpen(true);
@@ -336,13 +400,13 @@ export default function IncomingDetailsPage() {
           ))}
         </select>
         <div className="text-xs text-gray-500 mt-1">
-          (هذا الاختيار يُستخدم في “تغيير الحالة” و“التعيين” و“ملاحظة”)
+          (هذا الاختيار يُستخدم في “تغيير الحالة” و“التعيين” و“ملاحظة” و“SLA”)
         </div>
       </section>
 
       {/* تبويبات */}
       <div className="flex items-center gap-2 border-b">
-        {(["overview","forward","assign","files","timeline"] as const).map(t => (
+        {(["overview","forward","assign","files","timeline","sla"] as const).map(t => (
           <button
             key={t}
             onClick={()=>setTab(t)}
@@ -355,7 +419,8 @@ export default function IncomingDetailsPage() {
              t==="forward" ? "إحالة" :
              t==="assign" ? "تعيين" :
              t==="files" ? "الملفات" :
-             "السجل الزمني"}
+             t==="timeline" ? "السجل الزمني" :
+             "SLA"}
           </button>
         ))}
       </div>
@@ -379,6 +444,9 @@ export default function IncomingDetailsPage() {
                     <th className="p-2 text-right">الحالة</th>
                     <th className="p-2 text-right">ملاحظة</th>
                     <th className="p-2 text-right">آخر تحديث</th>
+                    <th className="p-2 text-right">تاريخ الاستحقاق</th>
+                    <th className="p-2 text-right">الأولوية</th>
+                    <th className="p-2 text-right">التصعيدات</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -389,9 +457,12 @@ export default function IncomingDetailsPage() {
                       <td className="p-2">{d.status}</td>
                       <td className="p-2">{d.notes ?? "—"}</td>
                       <td className="p-2">{fmtDT(d.lastUpdateAt)}</td>
+                      <td className="p-2">{fmtDT(d.dueAt)}</td>
+                      <td className="p-2">{Number.isFinite(d.priority) ? d.priority : 0}</td>
+                      <td className="p-2">{Number.isFinite(d.escalationCount) ? d.escalationCount : 0}</td>
                     </tr>
                   )) : (
-                    <tr><td colSpan={5} className="p-3 text-center text-gray-500">لا توجد توزيعات</td></tr>
+                    <tr><td colSpan={8} className="p-3 text-center text-gray-500">لا توجد توزيعات</td></tr>
                   )}
                 </tbody>
               </table>
@@ -444,7 +515,7 @@ export default function IncomingDetailsPage() {
         <PermissionsGate one="incoming.forward">
           <form onSubmit={submitForward} className="bg-white border rounded-2xl shadow-sm p-4 space-y-3">
             <div className="text-sm text-gray-600 mb-1">
-              إحالة الوارد {details.incomingNumber} إلى قسم آخر (مع إمكانية تعيين مكلّف اختياريًا).
+              إحالة الوارد {details.incomingNumber} إلى قسم آخر (مع إمكانية تعيين مكلّف واختيار SLA اختياريًا).
             </div>
             <div className="grid md:grid-cols-3 gap-3">
               <div>
@@ -471,10 +542,33 @@ export default function IncomingDetailsPage() {
                 <label htmlFor="closePrev" className="text-sm">إغلاق التوزيع السابق تلقائيًا</label>
               </div>
             </div>
-            <div>
-              <label className="text-xs text-gray-500">ملاحظة (اختياري)</label>
-              <input className="w-full border rounded-xl p-2" value={fwdNote} onChange={(e)=>setFwdNote(e.target.value)} placeholder="..." />
+
+            <div className="grid md:grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs text-gray-500">تاريخ الاستحقاق (اختياري)</label>
+                <input
+                  type="datetime-local"
+                  className="w-full border rounded-xl p-2"
+                  value={fwdDueAt}
+                  onChange={(e)=>setFwdDueAt(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">الأولوية (اختياري)</label>
+                <input
+                  type="number"
+                  min={0}
+                  className="w-full border rounded-xl p-2"
+                  value={fwdPriority}
+                  onChange={(e)=>setFwdPriority(Number(e.target.value))}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">ملاحظة (اختياري)</label>
+                <input className="w-full border rounded-xl p-2" value={fwdNote} onChange={(e)=>setFwdNote(e.target.value)} placeholder="..." />
+              </div>
             </div>
+
             <div>
               <button disabled={busy} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2">
                 {busy ? "..." : "تنفيذ الإحالة"}
@@ -575,7 +669,7 @@ export default function IncomingDetailsPage() {
             {timeline.length ? timeline.map((t, i) => (
               <div key={i} className="border rounded-xl p-3">
                 <div className="text-xs text-gray-500">{fmtDT(t.at)}</div>
-                <div className="font-semibold">{t.title}</div>
+                <div className="font-semibold">{t.actionLabel ?? "حدث"}</div>
                 {t.by && <div className="text-sm text-gray-600">بواسطة: {t.by}</div>}
                 {t.details && <div className="text-sm">{t.details}</div>}
                 {t.link && (
@@ -591,6 +685,46 @@ export default function IncomingDetailsPage() {
         </section>
       )}
 
+      {tab==="sla" && (
+        <PermissionsGate one="incoming.updateSLA">
+          <form onSubmit={submitSLA} className="bg-white border rounded-2xl shadow-sm p-4 space-y-3">
+            <div className="text-sm text-gray-600 mb-1">
+              تعديل اتفاقية مستوى الخدمة (SLA) للتوزيع المختار.
+            </div>
+            <div className="grid md:grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs text-gray-500">تاريخ الاستحقاق</label>
+                <input
+                  type="datetime-local"
+                  className="w-full border rounded-xl p-2"
+                  value={slaDueAt}
+                  onChange={(e)=>setSlaDueAt(e.target.value)}
+                />
+                <div className="text-[11px] text-gray-500 mt-1">اتركه فارغًا لإزالة التاريخ.</div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">الأولوية</label>
+                <input
+                  type="number"
+                  min={0}
+                  className="w-full border rounded-xl p-2"
+                  value={slaPriority}
+                  onChange={(e)=>setSlaPriority(Number(e.target.value))}
+                />
+              </div>
+              <div className="flex items-end">
+                <button
+                  disabled={busy || !selectedDistId}
+                  className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2 disabled:opacity-50"
+                >
+                  {busy ? "..." : "حفظ الـ SLA"}
+                </button>
+              </div>
+            </div>
+          </form>
+        </PermissionsGate>
+      )}
+
       {/* Preview modal */}
       <FilePreview open={previewOpen} onClose={()=>setPreviewOpen(false)} file={previewFile} />
     </div>
@@ -600,8 +734,7 @@ export default function IncomingDetailsPage() {
 
 
 
-
-
+// // src/pages/IncomingDetailsPage.tsx
 
 // import { useEffect, useMemo, useState } from "react";
 // import { useParams } from "react-router-dom";
@@ -609,6 +742,7 @@ export default function IncomingDetailsPage() {
 // import FilePreview from "../components/files/FilePreview";
 // import type { PreviewFile } from "../components/files/FilePreview";
 // import { toast } from "sonner";
+// import PermissionsGate from "../components/PermissionsGate";
 
 // type Department = { id: number; name: string; status?: string };
 // type UserLite   = { id: number; fullName: string; departmentId: number|null };
@@ -667,7 +801,6 @@ export default function IncomingDetailsPage() {
 //   });
 // }
 
-// // لاستخراج رسالة الخطأ من Axios
 // const errMsg = (e: any) =>
 //   e?.response?.data?.message
 //     ? Array.isArray(e.response.data.message)
@@ -690,7 +823,7 @@ export default function IncomingDetailsPage() {
 //   // إدارات
 //   const [departments, setDepartments] = useState<Department[]>([]);
 
-//   // ——— اختيار التوزيع الهدف لأوامر CRUD ———
+//   // ——— اختيار التوزيع الهدف ———
 //   const [selectedDistId, setSelectedDistId] = useState<string>("");
 
 //   // تبويب الإحالة
@@ -728,7 +861,6 @@ export default function IncomingDetailsPage() {
 //         setDetails(det.data);
 //         setTimeline(tl.data.items ?? []);
 //         setDepartments(Array.isArray(deps.data) ? deps.data : []);
-//         // اختر توزيع تلقائي: المفتوح/قيد الإجراء، وإلا الأحدث
 //         const auto =
 //           det.data.distributions?.find(d => d.status==="Open" || d.status==="InProgress")
 //           ?? det.data.distributions?.[0];
@@ -777,7 +909,6 @@ export default function IncomingDetailsPage() {
 //     try {
 //       const det = await api.get<Details>(`/incoming/${id}`);
 //       setDetails(det.data);
-//       // حافظ على التوزيع الحالي إن بقي موجودًا
 //       if (det.data.distributions?.length) {
 //         const keep = det.data.distributions.find(d => d.id === selectedDistId);
 //         if (!keep) {
@@ -794,7 +925,7 @@ export default function IncomingDetailsPage() {
 //     }
 //   };
 
-//   // ——— Handlers (مع toast.promise/ loading) ———
+//   // ——— Handlers ———
 //   const submitForward = async (e: React.FormEvent) => {
 //     e.preventDefault();
 //     if (!id) return;
@@ -878,7 +1009,7 @@ export default function IncomingDetailsPage() {
 //     setBusy(true);
 //     try {
 //       await toast.promise(
-//         api.post(`/incoming/distributions/${selectedDistId}/note`, {
+//         api.post(`/incoming/distributions/${selectedDistId}/notes`, {
 //           note: plainNote.trim(),
 //         }),
 //         {
@@ -925,7 +1056,7 @@ export default function IncomingDetailsPage() {
 //     <div className="space-y-6" dir="rtl">
 //       {header}
 
-//       {/* اختيار توزيع هدف عام لكل CRUD */}
+//       {/* اختيار توزيع هدف */}
 //       <section className="bg-white border rounded-2xl shadow-sm p-4">
 //         <label className="text-xs text-gray-500">اختر التوزيع (Target)</label>
 //         <select
@@ -1003,167 +1134,175 @@ export default function IncomingDetailsPage() {
 //             </div>
 //           </div>
 
-//           {/* مصغّر: تغيير الحالة + ملاحظة */}
+//           {/* تغيير الحالة + ملاحظة (مقيدة بالصلاحيات) */}
 //           <div className="grid md:grid-cols-2 gap-4">
-//             <form onSubmit={submitStatus} className="border rounded-2xl p-3 space-y-2">
-//               <div className="font-semibold text-sm">تغيير الحالة</div>
-//               <div className="text-xs text-gray-500 -mt-1">يطبّق على التوزيع المختار أعلاه</div>
-//               <div>
-//                 <label className="text-xs text-gray-500">الحالة الجديدة</label>
-//                 <select className="w-full border rounded-xl p-2 bg-white"
-//                   value={newStatus}
-//                   onChange={(e)=>setNewStatus(e.target.value as any)}>
-//                   <option value="Open">Open</option>
-//                   <option value="InProgress">InProgress</option>
-//                   <option value="Closed">Closed</option>
-//                   <option value="Escalated">Escalated</option>
-//                 </select>
-//               </div>
-//               <div>
-//                 <label className="text-xs text-gray-500">ملاحظة</label>
-//                 <input className="w-full border rounded-xl p-2" value={statusNote} onChange={(e)=>setStatusNote(e.target.value)} placeholder="اختياري" />
-//               </div>
-//               <button disabled={busy || !selectedDistId} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2 disabled:opacity-50">
-//                 {busy ? "..." : "تطبيق الحالة"}
-//               </button>
-//             </form>
+//             <PermissionsGate one="incoming.updateStatus">
+//               <form onSubmit={submitStatus} className="border rounded-2xl p-3 space-y-2">
+//                 <div className="font-semibold text-sm">تغيير الحالة</div>
+//                 <div className="text-xs text-gray-500 -mt-1">يطبّق على التوزيع المختار أعلاه</div>
+//                 <div>
+//                   <label className="text-xs text-gray-500">الحالة الجديدة</label>
+//                   <select className="w-full border rounded-xl p-2 bg-white"
+//                     value={newStatus}
+//                     onChange={(e)=>setNewStatus(e.target.value as any)}>
+//                     <option value="Open">Open</option>
+//                     <option value="InProgress">InProgress</option>
+//                     <option value="Closed">Closed</option>
+//                     <option value="Escalated">Escalated</option>
+//                   </select>
+//                 </div>
+//                 <div>
+//                   <label className="text-xs text-gray-500">ملاحظة</label>
+//                   <input className="w-full border rounded-xl p-2" value={statusNote} onChange={(e)=>setStatusNote(e.target.value)} placeholder="اختياري" />
+//                 </div>
+//                 <button disabled={busy || !selectedDistId} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2 disabled:opacity-50">
+//                   {busy ? "..." : "تطبيق الحالة"}
+//                 </button>
+//               </form>
 
-//             <form onSubmit={submitNote} className="border rounded-2xl p-3 space-y-2">
-//               <div className="font-semibold text-sm">إضافة ملاحظة</div>
-//               <div className="text-xs text-gray-500 -mt-1">للتوزيع المختار أعلاه</div>
-//               <div>
-//                 <label className="text-xs text-gray-500">ملاحظة</label>
-//                 <input className="w-full border rounded-xl p-2" value={plainNote} onChange={(e)=>setPlainNote(e.target.value)} placeholder="..." />
-//               </div>
-//               <button disabled={busy || !selectedDistId || !plainNote.trim()} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2 disabled:opacity-50">
-//                 {busy ? "..." : "حفظ الملاحظة"}
-//               </button>
-//             </form>
+//               <form onSubmit={submitNote} className="border rounded-2xl p-3 space-y-2">
+//                 <div className="font-semibold text-sm">إضافة ملاحظة</div>
+//                 <div className="text-xs text-gray-500 -mt-1">للتوزيع المختار أعلاه</div>
+//                 <div>
+//                   <label className="text-xs text-gray-500">ملاحظة</label>
+//                   <input className="w-full border rounded-xl p-2" value={plainNote} onChange={(e)=>setPlainNote(e.target.value)} placeholder="..." />
+//                 </div>
+//                 <button disabled={busy || !selectedDistId || !plainNote.trim()} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2 disabled:opacity-50">
+//                   {busy ? "..." : "حفظ الملاحظة"}
+//                 </button>
+//               </form>
+//             </PermissionsGate>
 //           </div>
 //         </section>
 //       )}
 
 //       {tab==="forward" && (
-//         <form onSubmit={submitForward} className="bg-white border rounded-2xl shadow-sm p-4 space-y-3">
-//           <div className="text-sm text-gray-600 mb-1">
-//             إحالة الوارد {details.incomingNumber} إلى قسم آخر (مع إمكانية تعيين مكلّف اختياريًا).
-//           </div>
-//           <div className="grid md:grid-cols-3 gap-3">
-//             <div>
-//               <label className="text-xs text-gray-500">القسم المستهدف</label>
-//               <select className="w-full border rounded-xl p-2 bg-white"
-//                 value={fwdDept}
-//                 onChange={(e)=>setFwdDept(e.target.value)}>
-//                 <option value="">اختر قسمًا</option>
-//                 {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-//               </select>
+//         <PermissionsGate one="incoming.forward">
+//           <form onSubmit={submitForward} className="bg-white border rounded-2xl shadow-sm p-4 space-y-3">
+//             <div className="text-sm text-gray-600 mb-1">
+//               إحالة الوارد {details.incomingNumber} إلى قسم آخر (مع إمكانية تعيين مكلّف اختياريًا).
+//             </div>
+//             <div className="grid md:grid-cols-3 gap-3">
+//               <div>
+//                 <label className="text-xs text-gray-500">القسم المستهدف</label>
+//                 <select className="w-full border rounded-xl p-2 bg-white"
+//                   value={fwdDept}
+//                   onChange={(e)=>setFwdDept(e.target.value)}>
+//                   <option value="">اختر قسمًا</option>
+//                   {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+//                 </select>
+//               </div>
+//               <div>
+//                 <label className="text-xs text-gray-500">المكلّف (اختياري)</label>
+//                 <select className="w-full border rounded-xl p-2 bg-white"
+//                   value={fwdUser}
+//                   onChange={(e)=>setFwdUser(e.target.value)}
+//                   disabled={!fwdDept || fwdUsersLoading}>
+//                   <option value="">{fwdUsersLoading ? "جاري التحميل..." : "—"}</option>
+//                   {fwdUsers.map(u => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+//                 </select>
+//               </div>
+//               <div className="flex items-end gap-2">
+//                 <input id="closePrev" type="checkbox" checked={fwdClosePrev} onChange={(e)=>setFwdClosePrev(e.target.checked)} />
+//                 <label htmlFor="closePrev" className="text-sm">إغلاق التوزيع السابق تلقائيًا</label>
+//               </div>
 //             </div>
 //             <div>
-//               <label className="text-xs text-gray-500">المكلّف (اختياري)</label>
-//               <select className="w-full border rounded-xl p-2 bg-white"
-//                 value={fwdUser}
-//                 onChange={(e)=>setFwdUser(e.target.value)}
-//                 disabled={!fwdDept || fwdUsersLoading}>
-//                 <option value="">{fwdUsersLoading ? "جاري التحميل..." : "—"}</option>
-//                 {fwdUsers.map(u => <option key={u.id} value={u.id}>{u.fullName}</option>)}
-//               </select>
+//               <label className="text-xs text-gray-500">ملاحظة (اختياري)</label>
+//               <input className="w-full border rounded-xl p-2" value={fwdNote} onChange={(e)=>setFwdNote(e.target.value)} placeholder="..." />
 //             </div>
-//             <div className="flex items-end gap-2">
-//               <input id="closePrev" type="checkbox" checked={fwdClosePrev} onChange={(e)=>setFwdClosePrev(e.target.checked)} />
-//               <label htmlFor="closePrev" className="text-sm">إغلاق التوزيع السابق تلقائيًا</label>
+//             <div>
+//               <button disabled={busy} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2">
+//                 {busy ? "..." : "تنفيذ الإحالة"}
+//               </button>
 //             </div>
-//           </div>
-//           <div>
-//             <label className="text-xs text-gray-500">ملاحظة (اختياري)</label>
-//             <input className="w-full border rounded-xl p-2" value={fwdNote} onChange={(e)=>setFwdNote(e.target.value)} placeholder="..." />
-//           </div>
-//           <div>
-//             <button disabled={busy} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2">
-//               {busy ? "..." : "تنفيذ الإحالة"}
-//             </button>
-//           </div>
-//         </form>
+//           </form>
+//         </PermissionsGate>
 //       )}
 
 //       {tab==="assign" && (
-//         <form onSubmit={submitAssign} className="bg-white border rounded-2xl shadow-sm p-4 space-y-3">
-//           <div className="text-sm text-gray-600 mb-1">
-//             تعيين مكلّف للتوزيع المختار أعلاه.
-//           </div>
-//           <div className="grid md:grid-cols-3 gap-3">
-//             <div>
-//               <label className="text-xs text-gray-500">الإدارة</label>
-//               <select className="w-full border rounded-xl p-2 bg-white"
-//                 value={assignDept}
-//                 onChange={(e)=>setAssignDept(e.target.value)}>
-//                 <option value="">اختر قسمًا</option>
-//                 {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-//               </select>
+//         <PermissionsGate one="incoming.assign">
+//           <form onSubmit={submitAssign} className="bg-white border rounded-2xl shadow-sm p-4 space-y-3">
+//             <div className="text-sm text-gray-600 mb-1">
+//               تعيين مكلّف للتوزيع المختار أعلاه.
+//             </div>
+//             <div className="grid md:grid-cols-3 gap-3">
+//               <div>
+//                 <label className="text-xs text-gray-500">الإدارة</label>
+//                 <select className="w-full border rounded-xl p-2 bg-white"
+//                   value={assignDept}
+//                   onChange={(e)=>setAssignDept(e.target.value)}>
+//                   <option value="">اختر قسمًا</option>
+//                   {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+//                 </select>
+//               </div>
+//               <div>
+//                 <label className="text-xs text-gray-500">المكلّف</label>
+//                 <select className="w-full border rounded-xl p-2 bg-white"
+//                   value={assignUser}
+//                   onChange={(e)=>setAssignUser(e.target.value)}
+//                   disabled={!assignDept || assignUsersLoading}>
+//                   <option value="">{assignUsersLoading ? "جاري التحميل..." : "اختر مستخدمًا"}</option>
+//                   {assignUsers.map(u => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+//                 </select>
+//               </div>
+//               <div>
+//                 <label className="text-xs text-gray-500">ملاحظة</label>
+//                 <input className="w-full border rounded-xl p-2" value={assignNote} onChange={(e)=>setAssignNote(e.target.value)} placeholder="اختياري" />
+//               </div>
 //             </div>
 //             <div>
-//               <label className="text-xs text-gray-500">المكلّف</label>
-//               <select className="w-full border rounded-xl p-2 bg-white"
-//                 value={assignUser}
-//                 onChange={(e)=>setAssignUser(e.target.value)}
-//                 disabled={!assignDept || assignUsersLoading}>
-//                 <option value="">{assignUsersLoading ? "جاري التحميل..." : "اختر مستخدمًا"}</option>
-//                 {assignUsers.map(u => <option key={u.id} value={u.id}>{u.fullName}</option>)}
-//               </select>
+//               <button disabled={busy || !selectedDistId} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2 disabled:opacity-50">
+//                 {busy ? "..." : "تطبيق التعيين"}
+//               </button>
 //             </div>
-//             <div>
-//               <label className="text-xs text-gray-500">ملاحظة</label>
-//               <input className="w-full border rounded-xl p-2" value={assignNote} onChange={(e)=>setAssignNote(e.target.value)} placeholder="اختياري" />
-//             </div>
-//           </div>
-//           <div>
-//             <button disabled={busy || !selectedDistId} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2 disabled:opacity-50">
-//               {busy ? "..." : "تطبيق التعيين"}
-//             </button>
-//           </div>
-//         </form>
+//           </form>
+//         </PermissionsGate>
 //       )}
 
 //       {tab==="files" && (
-//         <section className="bg-white border rounded-2xl shadow-sm p-4">
-//           <div className="overflow-auto rounded-xl border">
-//             <table className="min-w-full text-sm">
-//               <thead>
-//                 <tr className="bg-gray-100">
-//                   <th className="p-2 text-right">اسم الملف</th>
-//                   <th className="p-2 text-right">الحجم</th>
-//                   <th className="p-2 text-right">نسخة</th>
-//                   <th className="p-2 text-right">تاريخ الرفع</th>
-//                   <th className="p-2 text-right">عرض</th>
-//                 </tr>
-//               </thead>
-//               <tbody>
-//                 {details.files?.length ? details.files.map(f => (
-//                   <tr key={f.id} className="border-t">
-//                     <td className="p-2">{f.fileNameOriginal}</td>
-//                     <td className="p-2">{(f.fileSizeBytes/1024).toFixed(1)} KB</td>
-//                     <td className="p-2">v{f.versionNumber}</td>
-//                     <td className="p-2">{fmtDT(f.uploadedAt)}</td>
-//                     <td className="p-2">
-//                       <button
-//                         className="rounded-lg border px-2 py-1 text-xs hover:bg-gray-50"
-//                         onClick={() => openPreview({
-//                           id: f.id,
-//                           fileNameOriginal: f.fileNameOriginal,
-//                           fileUrl: f.fileUrl,
-//                           fileExtension: f.fileExtension,
-//                         })}
-//                       >
-//                         معاينة
-//                       </button>
-//                     </td>
+//         <PermissionsGate one="files.read">
+//           <section className="bg-white border rounded-2xl shadow-sm p-4">
+//             <div className="overflow-auto rounded-xl border">
+//               <table className="min-w-full text-sm">
+//                 <thead>
+//                   <tr className="bg-gray-100">
+//                     <th className="p-2 text-right">اسم الملف</th>
+//                     <th className="p-2 text-right">الحجم</th>
+//                     <th className="p-2 text-right">نسخة</th>
+//                     <th className="p-2 text-right">تاريخ الرفع</th>
+//                     <th className="p-2 text-right">عرض</th>
 //                   </tr>
-//                 )) : (
-//                   <tr><td colSpan={5} className="p-3 text-center text-gray-500">لا توجد ملفات</td></tr>
-//                 )}
-//               </tbody>
-//             </table>
-//           </div>
-//         </section>
+//                 </thead>
+//                 <tbody>
+//                   {details.files?.length ? details.files.map(f => (
+//                     <tr key={f.id} className="border-t">
+//                       <td className="p-2">{f.fileNameOriginal}</td>
+//                       <td className="p-2">{(f.fileSizeBytes/1024).toFixed(1)} KB</td>
+//                       <td className="p-2">v{f.versionNumber}</td>
+//                       <td className="p-2">{fmtDT(f.uploadedAt)}</td>
+//                       <td className="p-2">
+//                         <button
+//                           className="rounded-lg border px-2 py-1 text-xs hover:bg-gray-50"
+//                           onClick={() => openPreview({
+//                             id: f.id,
+//                             fileNameOriginal: f.fileNameOriginal,
+//                             fileUrl: f.fileUrl,
+//                             fileExtension: f.fileExtension,
+//                           })}
+//                         >
+//                           معاينة
+//                         </button>
+//                       </td>
+//                     </tr>
+//                   )) : (
+//                     <tr><td colSpan={5} className="p-3 text-center text-gray-500">لا توجد ملفات</td></tr>
+//                   )}
+//                 </tbody>
+//               </table>
+//             </div>
+//           </section>
+//         </PermissionsGate>
 //       )}
 
 //       {tab==="timeline" && (
@@ -1193,5 +1332,9 @@ export default function IncomingDetailsPage() {
 //     </div>
 //   );
 // }
+
+
+
+
 
 

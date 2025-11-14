@@ -11,6 +11,7 @@ import PermissionsGate from "../components/PermissionsGate";
 // ------------ Types ------------
 type Department = { id: number; name: string; status?: string };
 
+// الصفوف العادية القادمة من /incoming/search
 type IncomingRow = {
   id: string;
   incomingNumber: string;
@@ -18,6 +19,21 @@ type IncomingRow = {
   externalPartyName: string;
   document: { id: string; title: string } | null;
   hasFiles?: boolean;
+};
+
+// صفوف my-desk القادمة من /incoming/my-desk
+type MyDeskRow = {
+  id: string;                   // incomingId (للتنقل)
+  distributionId: string;       // معرف التوزيع
+  incomingNumber: string;
+  receivedDate: string;
+  externalPartyName: string;
+  document: { id: string; title: string } | null;
+  // SLA:
+  dueAt: string | null;
+  priority: number;
+  escalationCount: number;
+  status: "Open" | "InProgress" | "Closed" | "Escalated";
 };
 
 type Paged<T> = {
@@ -30,11 +46,18 @@ type Paged<T> = {
 
 // ------------ Page ------------
 export default function IncomingPage() {
+  // ===== وضع العرض: الكل أو مكتبي =====
+  const [mode, setMode] = useState<"all" | "mydesk">("all");
+  const [scope, setScope] = useState<"" | "overdue" | "today" | "week">("");
+
   // quick create
   const [title, setTitle] = useState("");
   const [deptId, setDeptId] = useState<string>("");
   const [party, setParty] = useState("جهة خارجية");
   const [delivery, setDelivery] = useState("Hand");
+  // SLA (اختياريان) في الإنشاء السريع
+  const [qcDueAt, setQcDueAt] = useState<string>("");     // datetime-local
+  const [qcPriority, setQcPriority] = useState<number>(0); // 0..N
 
   // departments for combobox
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -47,7 +70,7 @@ export default function IncomingPage() {
   const [q, setQ] = useState("");
   const [from, setFrom] = useState<string>("");
   const [to, setTo] = useState<string>("");
-  const [data, setData] = useState<Paged<IncomingRow>>({
+  const [data, setData] = useState<Paged<IncomingRow | MyDeskRow>>({
     page: 1, pageSize: 10, total: 0, pages: 1, rows: [],
   });
 
@@ -73,20 +96,48 @@ export default function IncomingPage() {
     }
   }
 
+  // محوّل ISO لـ datetime-local
+  function toIsoFromLocal(dtLocal: string) {
+    if (!dtLocal) return null;
+    try {
+      const asIso = new Date(dtLocal).toISOString();
+      return asIso;
+    } catch {
+      return null;
+    }
+  }
+
   async function loadList(p = page) {
     setLoading(true);
     try {
-      const res = await api.get<Paged<IncomingRow>>("/incoming/search", {
-        params: {
-          page: p,
-          pageSize,
-          q: q.trim() || undefined,
-          from: from || undefined,
-          to: to || undefined,
-        },
-      });
-      setData(res.data);
-      setPage(res.data.page);
+      if (mode === "all") {
+        // بحث عادي
+        const res = await api.get<Paged<IncomingRow>>("/incoming/search", {
+          params: {
+            page: p,
+            pageSize,
+            q: q.trim() || undefined,
+            from: from || undefined,
+            to: to || undefined,
+          },
+        });
+        setData(res.data as unknown as Paged<IncomingRow | MyDeskRow>);
+        setPage(res.data.page);
+      } else {
+        // مكتبي: يستخدم /incoming/my-desk ويدعم scope
+        const res = await api.get<Paged<MyDeskRow>>("/incoming/my-desk", {
+          params: {
+            page: p,
+            pageSize,
+            q: q.trim() || undefined,
+            from: from || undefined,
+            to: to || undefined,
+            scope: scope || undefined, // "overdue" | "today" | "week"
+          },
+        });
+        setData(res.data as unknown as Paged<IncomingRow | MyDeskRow>);
+        setPage(res.data.page);
+      }
     } catch (e: any) {
       toast.error(e?.response?.data?.message ?? "تعذّر تحميل الوارد");
     } finally {
@@ -96,8 +147,10 @@ export default function IncomingPage() {
 
   useEffect(() => {
     loadDepartments();
+    // عند تغيير وضع العرض أو نطاق scope نبدّل الصفحة للأولى
     loadList(1);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, scope]);
 
   // create + open upload dialog
   async function handleCreate(e: React.FormEvent) {
@@ -109,6 +162,9 @@ export default function IncomingPage() {
         owningDepartmentId: Number(deptId),
         externalPartyName: party.trim(),
         deliveryMethod: delivery,
+        // SLA اختياريان
+        dueAt: toIsoFromLocal(qcDueAt),
+        priority: Number.isFinite(qcPriority) ? qcPriority : 0,
       });
       toast.success("تم إنشاء الوارد بنجاح");
       const docId = res?.data?.document?.id;
@@ -119,6 +175,8 @@ export default function IncomingPage() {
       setTitle("");
       setParty("جهة خارجية");
       setDelivery("Hand");
+      setQcDueAt("");
+      setQcPriority(0);
       await loadList(1);
     } catch (e: any) {
       toast.error(e?.response?.data?.message ?? "فشل إنشاء الوارد");
@@ -128,18 +186,38 @@ export default function IncomingPage() {
   return (
     <div className="space-y-6" dir="rtl">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div className="space-y-1">
           <h1 className="text-2xl font-bold">الوارد</h1>
           <p className="text-sm text-gray-500">إنشاء وارد جديد واستعراض القائمة</p>
         </div>
-        <button
-          onClick={() => { loadDepartments(); loadList(); }}
-          className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
-        >
-          <RefreshCw className="size-4" />
-          تحديث
-        </button>
+        <div className="flex items-center gap-2">
+          {/* مبدّل وضع العرض */}
+          <div className="rounded-xl border overflow-hidden">
+            <button
+              onClick={() => setMode("all")}
+              className={`px-3 py-2 text-sm ${mode==="all" ? "bg-sky-600 text-white" : "bg-white hover:bg-gray-50"}`}
+              title="عرض كل الوارد"
+            >
+              الكل
+            </button>
+            <button
+              onClick={() => setMode("mydesk")}
+              className={`px-3 py-2 text-sm border-r ${mode==="mydesk" ? "bg-sky-600 text-white" : "bg-white hover:bg-gray-50"}`}
+              title="وارد مكتبي"
+            >
+              مكتبي
+            </button>
+          </div>
+
+          <button
+            onClick={() => { loadDepartments(); loadList(); }}
+            className="rounded-xl border px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
+          >
+            <RefreshCw className="size-4" />
+            تحديث
+          </button>
+        </div>
       </div>
 
       {/* Quick Create (مخفاة لمن لا يملك incoming.create) */}
@@ -203,6 +281,27 @@ export default function IncomingPage() {
               />
             </div>
 
+            {/* SLA اختياريان في الإنشاء */}
+            <div>
+              <label className="text-xs">تاريخ الاستحقاق (اختياري)</label>
+              <input
+                type="datetime-local"
+                className="w-full border rounded-xl p-2"
+                value={qcDueAt}
+                onChange={(e)=>setQcDueAt(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-xs">الأولوية (اختياري)</label>
+              <input
+                type="number"
+                min={0}
+                className="w-full border rounded-xl p-2"
+                value={qcPriority}
+                onChange={(e)=>setQcPriority(Number(e.target.value))}
+              />
+            </div>
+
             <div className="md:col-span-2 flex items-end">
               <button
                 disabled={!canCreate}
@@ -253,6 +352,37 @@ export default function IncomingPage() {
             </button>
           </div>
         </div>
+
+        {/* أزرار نطاق my-desk */}
+        {mode === "mydesk" && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-xs text-gray-500">النطاق:</span>
+            <button
+              onClick={() => setScope("")}
+              className={`px-3 py-1.5 rounded-xl border ${scope==="" ? "bg-sky-600 text-white" : "bg-white hover:bg-gray-50"}`}
+            >
+              بدون
+            </button>
+            <button
+              onClick={() => setScope("overdue")}
+              className={`px-3 py-1.5 rounded-xl border ${scope==="overdue" ? "bg-sky-600 text-white" : "bg-white hover:bg-gray-50"}`}
+            >
+              متأخر
+            </button>
+            <button
+              onClick={() => setScope("today")}
+              className={`px-3 py-1.5 rounded-xl border ${scope==="today" ? "bg-sky-600 text-white" : "bg-white hover:bg-gray-50"}`}
+            >
+              اليوم
+            </button>
+            <button
+              onClick={() => setScope("week")}
+              className={`px-3 py-1.5 rounded-xl border ${scope==="week" ? "bg-sky-600 text-white" : "bg-white hover:bg-gray-50"}`}
+            >
+              هذا الأسبوع
+            </button>
+          </div>
+        )}
       </section>
 
       {/* List */}
@@ -265,44 +395,64 @@ export default function IncomingPage() {
                 <th className="px-4 py-3 text-right">التاريخ</th>
                 <th className="px-4 py-3 text-right">الجهة</th>
                 <th className="px-4 py-3 text-right">العنوان</th>
-                <th className="px-4 py-3 text-center">ملفات؟</th>
+                {mode === "mydesk" ? (
+                  <>
+                    <th className="px-4 py-3 text-right">الاستحقاق</th>
+                    <th className="px-4 py-3 text-right">الأولوية</th>
+                    <th className="px-4 py-3 text-right">التصعيدات</th>
+                    <th className="px-4 py-3 text-right">الحالة</th>
+                  </>
+                ) : (
+                  <th className="px-4 py-3 text-center">ملفات؟</th>
+                )}
                 <th className="px-4 py-3 text-center">إجراءات</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td className="px-4 py-6 text-center text-gray-500" colSpan={6}>... جاري التحميل</td></tr>
+                <tr><td className="px-4 py-6 text-center text-gray-500" colSpan={mode==="mydesk" ? 9 : 6}>... جاري التحميل</td></tr>
               ) : data.rows.length === 0 ? (
-                <tr><td className="px-4 py-6 text-center text-gray-500" colSpan={6}>لا توجد نتائج</td></tr>
+                <tr><td className="px-4 py-6 text-center text-gray-500" colSpan={mode==="mydesk" ? 9 : 6}>لا توجد نتائج</td></tr>
               ) : (
-                data.rows.map((r) => (
-                  <tr key={r.id} className="border-t">
+                data.rows.map((row:any) => (
+                  <tr key={row.id} className="border-t">
                     <td className="px-4 py-2">
-                      <Link to={`/incoming/${r.id}`} className="text-sky-700 hover:underline">
-                        {r.incomingNumber}
+                      <Link to={`/incoming/${row.id}`} className="text-sky-700 hover:underline">
+                        {row.incomingNumber}
                       </Link>
                     </td>
-                    <td className="px-4 py-2">{new Date(r.receivedDate).toLocaleString("ar-LY")}</td>
-                    <td className="px-4 py-2">{r.externalPartyName || "—"}</td>
+                    <td className="px-4 py-2">{new Date(row.receivedDate).toLocaleString("ar-LY")}</td>
+                    <td className="px-4 py-2">{row.externalPartyName || "—"}</td>
                     <td className="px-4 py-2">
                       <div className="flex items-center gap-1">
                         <FileText className="size-4 text-gray-500" />
-                        <span>{r.document?.title ?? "—"}</span>
+                        <span>{row.document?.title ?? "—"}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-2 text-center">
-                      {r.hasFiles ? (
-                        <CheckSquare className="inline size-4 text-emerald-600" />
-                      ) : (
-                        <span className="text-gray-400">—</span>
-                      )}
-                    </td>
+
+                    {mode === "mydesk" ? (
+                      <>
+                        <td className="px-4 py-2">{row.dueAt ? new Date(row.dueAt).toLocaleString("ar-LY") : "—"}</td>
+                        <td className="px-4 py-2">{Number.isFinite(row.priority) ? row.priority : 0}</td>
+                        <td className="px-4 py-2">{Number.isFinite(row.escalationCount) ? row.escalationCount : 0}</td>
+                        <td className="px-4 py-2">{row.status}</td>
+                      </>
+                    ) : (
+                      <td className="px-4 py-2 text-center">
+                        {row.hasFiles ? (
+                          <CheckSquare className="inline size-4 text-emerald-600" />
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
+                    )}
+
                     <td className="px-4 py-2 text-center">
                       <PermissionsGate one="files.upload">
-                        {r.document?.id ? (
+                        {row.document?.id ? (
                           <button
                             className="inline-flex items-center gap-1 text-sky-700 hover:underline"
-                            onClick={() => { setUploadDocId(r.document!.id); setUploadOpen(true); }}
+                            onClick={() => { setUploadDocId(row.document!.id); setUploadOpen(true); }}
                           >
                             <Upload className="size-4" />
                             رفع ملف
@@ -356,7 +506,6 @@ export default function IncomingPage() {
 
 
 
-
 // // src/pages/IncomingPage.tsx
 
 // import { useEffect, useMemo, useState } from "react";
@@ -365,6 +514,7 @@ export default function IncomingPage() {
 // import { toast } from "sonner";
 // import { Plus, Upload, Search, RefreshCw, FileText, CheckSquare } from "lucide-react";
 // import UploadFilesDialog from "../components/UploadFilesDialog";
+// import PermissionsGate from "../components/PermissionsGate";
 
 // // ------------ Types ------------
 // type Department = { id: number; name: string; status?: string };
@@ -390,7 +540,7 @@ export default function IncomingPage() {
 // export default function IncomingPage() {
 //   // quick create
 //   const [title, setTitle] = useState("");
-//   const [deptId, setDeptId] = useState<string>(""); // <-- صار select
+//   const [deptId, setDeptId] = useState<string>("");
 //   const [party, setParty] = useState("جهة خارجية");
 //   const [delivery, setDelivery] = useState("Hand");
 
@@ -424,8 +574,6 @@ export default function IncomingPage() {
 //       const res = await api.get<Department[]>("/departments", { params: { status: "Active" } });
 //       const list = Array.isArray(res.data) ? res.data : [];
 //       setDepartments(list);
-//       // لو تحب تختار أول قسم تلقائياً:
-//       // if (!deptId && list.length) setDeptId(String(list[0].id));
 //     } catch (e: any) {
 //       toast.error(e?.response?.data?.message ?? "تعذّر تحميل الإدارات");
 //     } finally {
@@ -466,7 +614,7 @@ export default function IncomingPage() {
 //     try {
 //       const res = await api.post("/incoming", {
 //         documentTitle: title.trim(),
-//         owningDepartmentId: Number(deptId), // <-- من الـ combobox
+//         owningDepartmentId: Number(deptId),
 //         externalPartyName: party.trim(),
 //         deliveryMethod: delivery,
 //       });
@@ -476,7 +624,6 @@ export default function IncomingPage() {
 //         setUploadDocId(String(docId));
 //         setUploadOpen(true);
 //       }
-//       // reset form (اترك الإدارة كما هي إذا تحب)
 //       setTitle("");
 //       setParty("جهة خارجية");
 //       setDelivery("Hand");
@@ -503,77 +650,78 @@ export default function IncomingPage() {
 //         </button>
 //       </div>
 
-//       {/* Quick Create */}
-//       <section className="bg-white border rounded-2xl shadow-sm p-4 space-y-3">
-//         <div className="flex items-center gap-2 text-sm font-semibold">
-//           <Plus className="size-4 text-sky-700" />
-//           إنشاء وارد سريع
-//         </div>
-//         <form onSubmit={handleCreate} className="grid md:grid-cols-4 gap-3">
-//           <div className="md:col-span-2">
-//             <label className="text-xs">عنوان الوثيقة</label>
-//             <input
-//               value={title}
-//               onChange={(e) => setTitle(e.target.value)}
-//               className="w-full border rounded-xl p-2"
-//               placeholder="اكتب عنوانًا واضحًا"
-//             />
+//       {/* Quick Create (مخفاة لمن لا يملك incoming.create) */}
+//       <PermissionsGate one="incoming.create">
+//         <section className="bg-white border rounded-2xl shadow-sm p-4 space-y-3">
+//           <div className="flex items-center gap-2 text-sm font-semibold">
+//             <Plus className="size-4 text-sky-700" />
+//             إنشاء وارد سريع
 //           </div>
+//           <form onSubmit={handleCreate} className="grid md:grid-cols-4 gap-3">
+//             <div className="md:col-span-2">
+//               <label className="text-xs">عنوان الوثيقة</label>
+//               <input
+//                 value={title}
+//                 onChange={(e) => setTitle(e.target.value)}
+//                 className="w-full border rounded-xl p-2"
+//                 placeholder="اكتب عنوانًا واضحًا"
+//               />
+//             </div>
 
-//           {/* ✅ Combobox للـ Department */}
-//           <div>
-//             <label className="text-xs">القسم المالِك</label>
-//             <select
-//               className="w-full border rounded-xl p-2 bg-white"
-//               value={deptId}
-//               onChange={(e) => setDeptId(e.target.value)}
-//               disabled={depsLoading}
-//             >
-//               <option value="">{depsLoading ? "جاري التحميل..." : "اختر قسمًا"}</option>
-//               {departments.map((d) => (
-//                 <option key={d.id} value={String(d.id)}>
-//                   {d.name}
-//                 </option>
-//               ))}
-//             </select>
-//           </div>
+//             <div>
+//               <label className="text-xs">القسم المالِك</label>
+//               <select
+//                 className="w-full border rounded-xl p-2 bg-white"
+//                 value={deptId}
+//                 onChange={(e) => setDeptId(e.target.value)}
+//                 disabled={depsLoading}
+//               >
+//                 <option value="">{depsLoading ? "جاري التحميل..." : "اختر قسمًا"}</option>
+//                 {departments.map((d) => (
+//                   <option key={d.id} value={String(d.id)}>
+//                     {d.name}
+//                   </option>
+//                 ))}
+//               </select>
+//             </div>
 
-//           <div>
-//             <label className="text-xs">طريقة التسليم</label>
-//             <select
-//               value={delivery}
-//               onChange={(e) => setDelivery(e.target.value)}
-//               className="w-full border rounded-xl p-2 bg-white"
-//             >
-//               <option value="Hand">تسليم باليد</option>
-//               <option value="Mail">بريد رسمي</option>
-//               <option value="Email">بريد إلكتروني</option>
-//               <option value="Courier">مندوب/ساعي</option>
-//               <option value="Fax">فاكس</option>
-//               <option value="ElectronicSystem">عن طريق المنظومة</option>
-//             </select>
-//           </div>
+//             <div>
+//               <label className="text-xs">طريقة التسليم</label>
+//               <select
+//                 value={delivery}
+//                 onChange={(e) => setDelivery(e.target.value)}
+//                 className="w-full border rounded-xl p-2 bg-white"
+//               >
+//                 <option value="Hand">تسليم باليد</option>
+//                 <option value="Mail">بريد رسمي</option>
+//                 <option value="Email">بريد إلكتروني</option>
+//                 <option value="Courier">مندوب/ساعي</option>
+//                 <option value="Fax">فاكس</option>
+//                 <option value="ElectronicSystem">عن طريق المنظومة</option>
+//               </select>
+//             </div>
 
-//           <div className="md:col-span-2">
-//             <label className="text-xs">الجهة الخارجية</label>
-//             <input
-//               value={party}
-//               onChange={(e) => setParty(e.target.value)}
-//               className="w-full border rounded-xl p-2"
-//               placeholder="اسم الجهة"
-//             />
-//           </div>
+//             <div className="md:col-span-2">
+//               <label className="text-xs">الجهة الخارجية</label>
+//               <input
+//                 value={party}
+//                 onChange={(e) => setParty(e.target.value)}
+//                 className="w-full border rounded-xl p-2"
+//                 placeholder="اسم الجهة"
+//               />
+//             </div>
 
-//           <div className="md:col-span-2 flex items-end">
-//             <button
-//               disabled={!canCreate}
-//               className="bg-sky-600 hover:bg-sky-700 text-white rounded-xl px-4 py-2 disabled:opacity-60"
-//             >
-//               إنشاء الوارد
-//             </button>
-//           </div>
-//         </form>
-//       </section>
+//             <div className="md:col-span-2 flex items-end">
+//               <button
+//                 disabled={!canCreate}
+//                 className="bg-sky-600 hover:bg-sky-700 text-white rounded-xl px-4 py-2 disabled:opacity-60"
+//               >
+//                 إنشاء الوارد
+//               </button>
+//             </div>
+//           </form>
+//         </section>
+//       </PermissionsGate>
 
 //       {/* Filters */}
 //       <section className="bg-white border rounded-2xl shadow-sm p-4">
@@ -658,17 +806,19 @@ export default function IncomingPage() {
 //                       )}
 //                     </td>
 //                     <td className="px-4 py-2 text-center">
-//                       {r.document?.id ? (
-//                         <button
-//                           className="inline-flex items-center gap-1 text-sky-700 hover:underline"
-//                           onClick={() => { setUploadDocId(r.document!.id); setUploadOpen(true); }}
-//                         >
-//                           <Upload className="size-4" />
-//                           رفع ملف
-//                         </button>
-//                       ) : (
-//                         <span className="text-gray-400">—</span>
-//                       )}
+//                       <PermissionsGate one="files.upload">
+//                         {r.document?.id ? (
+//                           <button
+//                             className="inline-flex items-center gap-1 text-sky-700 hover:underline"
+//                             onClick={() => { setUploadDocId(r.document!.id); setUploadOpen(true); }}
+//                           >
+//                             <Upload className="size-4" />
+//                             رفع ملف
+//                           </button>
+//                         ) : (
+//                           <span className="text-gray-400">—</span>
+//                         )}
+//                       </PermissionsGate>
 //                     </td>
 //                   </tr>
 //                 ))

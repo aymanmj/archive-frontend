@@ -26,11 +26,20 @@ export default function LoginPage() {
     setError(null);
     setBusy(true);
     try {
+      // const { data } = await api.post("/auth/login", { username, password });
+      // const token: string = data?.token;
+      // if (!token) throw new Error("لم يتم استلام التوكن");
+
+      // await login(token);
+
       const { data } = await api.post("/auth/login", { username, password });
       const token: string = data?.token;
+      const user = data?.user;
       if (!token) throw new Error("لم يتم استلام التوكن");
 
-      await login(token);
+      await login(token, user); // 👈 مرر user هنا
+
+
       navigate(from, { replace: true });
     } catch (err: any) {
       setError(err?.response?.data?.message ?? "فشل تسجيل الدخول");
@@ -132,7 +141,7 @@ export default function LoginPage() {
                 className="mt-1 w-full border rounded-lg px-3 py-2 outline-none focus:ring"
                 value={resetInput}
                 onChange={(e) => setResetInput(e.target.value)}
-                placeholder="مثال: https://…/reset-password?token=… أو الرمزالصِرف"
+                placeholder="مثال: https://…/reset?token=… أو الرمزالصِرف"
               />
             </label>
 
