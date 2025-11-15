@@ -1,7 +1,14 @@
 // src/pages/UsersAdminPage.tsx
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { listUsers, type UserSummary, issuePasswordResetForUser } from "../api/users";
+// import { listUsers, type UserSummary, issuePasswordResetForUser } from "../api/users";
+import {
+  listUsers,
+  type UserSummary,
+  issuePasswordResetForUser,
+  unlockUserLogin,
+} from "../api/users";
+
 import { listRoles, getUserRoles, setUserRoles, type RoleDto, type UserRolesDto } from "../api/rbac";
 import { listDepartments, type DepartmentDto } from "../api/departments";
 import api from "../api/apiClient";
@@ -253,6 +260,28 @@ export default function UsersAdminPage() {
   const input: React.CSSProperties = { width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #d1d5db" };
   const h3: React.CSSProperties = { marginTop: 0, marginBottom: 12 };
 
+  const [unlocking, setUnlocking] = useState(false);
+
+  const handleUnlockLogin = async () => {
+    if (!selectedUserId) {
+      showToast("اختر مستخدمًا أولاً.", true);
+      return;
+    }
+    try {
+      setUnlocking(true);
+      await unlockUserLogin(selectedUserId);
+      showToast("تم فك حظر تسجيل الدخول لهذا المستخدم.");
+    } catch (e: any) {
+      console.error(e);
+      showToast(
+        e?.response?.data?.message ?? "تعذّر فك الحظر. تأكّد من صلاحياتك.",
+        true
+      );
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: 16 }}>
       <h2 style={{ margin: "6px 0 16px 0" }}>إدارة المستخدمين</h2>
@@ -358,6 +387,26 @@ export default function UsersAdminPage() {
                 )}
               </div>
             )}
+          </div>
+          <div style={{ marginTop: 12, borderTop: "1px solid #eee", paddingTop: 12 }}>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>فك حظر تسجيل الدخول</div>
+            <p style={{ fontSize: 13, color: "#555", marginBottom: 8 }}>
+              استخدم هذا الخيار إذا تم حظر المستخدم بسبب محاولات دخول فاشلة متكررة.
+            </p>
+            <button
+              onClick={handleUnlockLogin}
+              disabled={!selectedUserId || unlocking}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: "none",
+                background: unlocking ? "#94a3b8" : "#f97316",
+                color: "#fff",
+                cursor: unlocking ? "not-allowed" : "pointer",
+              }}
+            >
+              {unlocking ? "جاري فك الحظر…" : "فك حظر تسجيل الدخول"}
+            </button>
           </div>
         </div>
 

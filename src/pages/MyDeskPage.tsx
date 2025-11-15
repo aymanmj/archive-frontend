@@ -8,7 +8,7 @@ type Dept = { id: number; name: string; status?: string };
 type UserLite = { id: number; fullName: string; departmentId: number | null };
 
 type Row = {
-  id: string; // distributionId
+  id: string; // distributionId أو PK داخلي
   distributionId: string;
   status: "Open" | "InProgress" | "Closed" | "Escalated";
   lastUpdateAt?: string;
@@ -16,7 +16,12 @@ type Row = {
   incomingNumber?: string;
   receivedDate?: string;
   externalPartyName?: string;
-  document?: { id: string; title: string } | null; // ← توحيد كـ string
+  document?: { id: string; title: string } | null;
+
+  // حقول SLA / تصعيد
+  dueAt?: string | null;
+  priority?: number | null;
+  escalationCount?: number | null;
 };
 
 type Resp = {
@@ -27,7 +32,7 @@ type Resp = {
   rows: Row[];
 };
 
-function fmtDT(v?: string) {
+function fmtDT(v?: string | null) {
   if (!v) return "—";
   const d = new Date(v);
   if (isNaN(d.getTime())) return "—";
@@ -53,6 +58,16 @@ function badgeCls(status: Row["status"]) {
   }
 }
 
+function isOverdue(r: Row) {
+  if (!r.dueAt) return false;
+  if (r.status === "Closed") return false;
+  const d = new Date(r.dueAt);
+  if (isNaN(d.getTime())) return false;
+  return d.getTime() < Date.now();
+}
+
+type Bucket = "all" | "overdue" | "today" | "week" | "escalated";
+
 export default function MyDeskPage() {
   // فلاتر نص/تاريخ
   const [qInput, setQInput] = useState("");
@@ -67,6 +82,9 @@ export default function MyDeskPage() {
   const [assigneeId, setAssigneeId] = useState<string>("");
   const [incomingNumber, setIncomingNumber] = useState("");
   const [distributionId, setDistributionId] = useState("");
+
+  // فلتر "منظور" مكتبي (SLA)
+  const [bucket, setBucket] = useState<Bucket>("all");
 
   // مصادر القوائم
   const [departments, setDepartments] = useState<Dept[]>([]);
@@ -95,7 +113,9 @@ export default function MyDeskPage() {
           params: { status: "Active" },
         });
         setDepartments(Array.isArray(res.data) ? res.data : []);
-      } catch {}
+      } catch {
+        // تجاهل الخطأ في الفلتر فقط
+      }
     })();
   }, []);
 
@@ -109,8 +129,9 @@ export default function MyDeskPage() {
       try {
         const res = await api.get<UserLite[]>(`/users/by-department/${deptId}`);
         setUsersFilter(Array.isArray(res.data) ? res.data : []);
-      } catch {}
-      finally {
+      } catch {
+        // تجاهل
+      } finally {
         setLoadingUsersFilter(false);
       }
     })();
@@ -127,8 +148,21 @@ export default function MyDeskPage() {
     if (assigneeId) p.set("assigneeId", assigneeId);
     if (incomingNumber.trim()) p.set("incomingNumber", incomingNumber.trim());
     if (distributionId.trim()) p.set("distributionId", distributionId.trim());
+    // if (bucket && bucket !== "all") p.set("bucket", bucket); // 👈 فلتر SLA
+    if (bucket && bucket !== "all") p.set("scope", bucket);
     return p.toString();
-  }, [page, pageSize, q, from, to, deptId, assigneeId, incomingNumber, distributionId]);
+  }, [
+    page,
+    pageSize,
+    q,
+    from,
+    to,
+    deptId,
+    assigneeId,
+    incomingNumber,
+    distributionId,
+    bucket,
+  ]);
 
   // إلغاء الطلب السابق عند تغيّر المعاملات
   const abortRef = useRef<AbortController | null>(null);
@@ -190,8 +224,9 @@ export default function MyDeskPage() {
           `/users/by-department/${assignDept}`
         );
         setAssignUsers(Array.isArray(res.data) ? res.data : []);
-      } catch {}
-      finally {
+      } catch {
+        // تجاهل
+      } finally {
         setAssignUsersLoading(false);
       }
     })();
@@ -215,8 +250,9 @@ export default function MyDeskPage() {
       try {
         const res = await api.get<UserLite[]>(`/users/by-department/${fwdDept}`);
         setFwdUsers(Array.isArray(res.data) ? res.data : []);
-      } catch {}
-      finally {
+      } catch {
+        // تجاهل
+      } finally {
         setFwdUsersLoading(false);
       }
     })();
@@ -293,8 +329,13 @@ export default function MyDeskPage() {
     setAssigneeId("");
     setIncomingNumber("");
     setDistributionId("");
+    setBucket("all");
     setPage(1);
   }
+
+  const total = data?.total ?? 0;
+  const currentPage = data?.page ?? 1;
+  const totalPages = data?.pages ?? 1;
 
   return (
     <div className="space-y-6" dir="rtl">
@@ -302,13 +343,14 @@ export default function MyDeskPage() {
         <div>
           <h1 className="text-2xl font-bold">مكتبي</h1>
           <p className="text-sm text-gray-500 mt-1">
-            كل التوزيعات المفتوحة/تحت الإجراء المرتبطة بك أو بإدارتك/قسمك
+            كل التوزيعات المفتوحة/تحت الإجراء المرتبطة بك أو بإدارتك/قسمك، مع
+            إبراز المتأخر منها بناءً على تاريخ الاستحقاق (SLA).
           </p>
         </div>
       </header>
 
       {/* فلاتر أعلى الجدول */}
-      <section className="bg-white border rounded-2xl shadow-sm p-4">
+      <section className="bg-white border rounded-2xl shadow-sm p-4 space-y-3">
         <div className="grid lg:grid-cols-8 sm:grid-cols-3 grid-cols-1 gap-3 text-sm">
           <div className="lg:col-span-2">
             <label className="text-xs text-gray-500">بحث (رقم/عنوان/جهة)</label>
@@ -413,26 +455,61 @@ export default function MyDeskPage() {
             />
           </div>
 
-          <div className="flex items-end gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-end gap-2">
             <button
               onClick={() => load()}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2"
+              className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2 min-w-[110px] whitespace-nowrap shrink-0"
             >
               تحديث
             </button>
             <button
               onClick={resetFilters}
-              className="w-full border rounded-xl px-4 py-2"
+              className="w-full sm:w-auto border rounded-xl px-4 py-2 text-sm text-gray-700 bg-white hover:bg-gray-50 min-w-[110px] whitespace-nowrap shrink-0"
             >
               إعادة تعيين
             </button>
           </div>
         </div>
+
+        {/* أزرار منظور SLA السريع */}
+        <div className="flex flex-wrap items-center gap-2 text-xs mt-2">
+          <span className="text-gray-500">عرض سريع حسب تاريخ الاستحقاق:</span>
+          {(
+            [
+              ["all", "الكل"],
+              ["overdue", "متأخرة"],
+              ["today", "مستحقة اليوم"],
+              ["week", "هذا الأسبوع"],
+              ["escalated", "تم تصعيدها"],
+            ] as [Bucket, string][]
+          ).map(([b, label]) => (
+            <button
+              key={b}
+              onClick={() => {
+                setPage(1);
+                setBucket(b);
+              }}
+              className={[
+                "px-3 py-1 rounded-full border text-xs",
+                bucket === b
+                  ? "bg-blue-600 text-white border-blue-600"
+                  : "bg-white text-gray-700 hover:bg-gray-50",
+              ].join(" ")}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="text-[11px] text-gray-500 mt-1">
+          يتم الاعتماد على حقل <span className="font-mono">dueAt</span> من
+          التوزيع (SLA). التوزيعات المغلقة لا تُعتبر متأخرة حتى لو كان تاريخ
+          الاستحقاق قد مضى.
+        </div>
       </section>
 
       {/* جدول */}
       <section className="bg-white border rounded-2xl shadow-sm p-4">
-        {err && <div className="text-sm text-red-600">{err}</div>}
+        {err && <div className="text-sm text-red-600 mb-2">{err}</div>}
         {loading ? (
           <div className="text-sm text-gray-500">...جاري التحميل</div>
         ) : (
@@ -446,6 +523,9 @@ export default function MyDeskPage() {
                     <th className="p-2 text-right">عنوان الوثيقة</th>
                     <th className="p-2 text-right">الجهة</th>
                     <th className="p-2 text-right">تاريخ الاستلام</th>
+                    <th className="p-2 text-right">تاريخ الاستحقاق</th>
+                    <th className="p-2 text-right">الأولوية</th>
+                    <th className="p-2 text-right">التصعيدات</th>
                     <th className="p-2 text-right">الحالة</th>
                     <th className="p-2 text-right">آخر تحديث</th>
                     <th className="p-2 text-right">إجراءات</th>
@@ -453,82 +533,111 @@ export default function MyDeskPage() {
                 </thead>
                 <tbody>
                   {data?.rows?.length ? (
-                    data.rows.map((r) => (
-                      <tr key={r.distributionId} className="border-t">
-                        <td className="p-2">{r.distributionId}</td>
-                        <td className="p-2">
-                          {r.incomingId ? (
-                            <Link
-                              className="text-blue-600 hover:underline font-mono"
-                              to={`/incoming/${r.incomingId}`}
+                    data.rows.map((r) => {
+                      const priority =
+                        typeof r.priority === "number" &&
+                        Number.isFinite(r.priority)
+                          ? r.priority
+                          : 0;
+                      const escCount =
+                        typeof r.escalationCount === "number" &&
+                        Number.isFinite(r.escalationCount)
+                          ? r.escalationCount
+                          : 0;
+                      const overdue = isOverdue(r);
+
+                      return (
+                        <tr
+                          key={r.distributionId}
+                          className={
+                            "border-t " + (overdue ? "bg-rose-50" : "")
+                          }
+                        >
+                          <td className="p-2">{r.distributionId}</td>
+                          <td className="p-2">
+                            {r.incomingId ? (
+                              <Link
+                                className="text-blue-600 hover:underline font-mono"
+                                to={`/incoming/${r.incomingId}`}
+                              >
+                                {r.incomingNumber ?? r.incomingId}
+                              </Link>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td className="p-2">{r.document?.title ?? "—"}</td>
+                          <td className="p-2">
+                            {r.externalPartyName ?? "—"}
+                          </td>
+                          <td className="p-2">{fmtDT(r.receivedDate)}</td>
+                          <td className="p-2">{fmtDT(r.dueAt)}</td>
+                          <td className="p-2">{priority}</td>
+                          <td className="p-2">{escCount}</td>
+                          <td className="p-2">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${badgeCls(
+                                r.status
+                              )}`}
                             >
-                              {r.incomingNumber ?? r.incomingId}
-                            </Link>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="p-2">{r.document?.title ?? "—"}</td>
-                        <td className="p-2">{r.externalPartyName ?? "—"}</td>
-                        <td className="p-2">{fmtDT(r.receivedDate)}</td>
-                        <td className="p-2">
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${badgeCls(
-                              r.status
-                            )}`}
-                          >
-                            {r.status}
-                          </span>
-                        </td>
-                        <td className="p-2">{fmtDT(r.lastUpdateAt)}</td>
-                        <td className="p-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <button
-                              onClick={() => {
-                                setStatusDistId(r.distributionId);
-                                setStatusNew("InProgress");
-                                setStatusNote("");
-                              }}
-                              className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
-                            >
-                              حالة
-                            </button>
-                            <button
-                              onClick={() => {
-                                setAssignDistId(r.distributionId);
-                                setAssignDept("");
-                                setAssignUser("");
-                                setAssignNote("");
-                              }}
-                              className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
-                            >
-                              تعيين
-                            </button>
-                            <button
-                              onClick={() => {
-                                setFwdIncomingId(r.incomingId);
-                                setFwdDept("");
-                                setFwdUser("");
-                                setFwdClosePrev(true);
-                                setFwdNote("");
-                              }}
-                              className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
-                            >
-                              إحالة
-                            </button>
-                            <Link
-                              to={`/incoming/${r.incomingId}`}
-                              className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
-                            >
-                              عرض
-                            </Link>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
+                              {r.status}
+                              {overdue && (
+                                <span className="ml-1 text-[10px] text-rose-700">
+                                  (متأخرة)
+                                </span>
+                              )}
+                            </span>
+                          </td>
+                          <td className="p-2">{fmtDT(r.lastUpdateAt)}</td>
+                          <td className="p-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  setStatusDistId(r.distributionId);
+                                  setStatusNew("InProgress");
+                                  setStatusNote("");
+                                }}
+                                className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
+                              >
+                                حالة
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setAssignDistId(r.distributionId);
+                                  setAssignDept("");
+                                  setAssignUser("");
+                                  setAssignNote("");
+                                }}
+                                className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
+                              >
+                                تعيين
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setFwdIncomingId(r.incomingId);
+                                  setFwdDept("");
+                                  setFwdUser("");
+                                  setFwdClosePrev(true);
+                                  setFwdNote("");
+                                }}
+                                className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
+                              >
+                                إحالة
+                              </button>
+                              <Link
+                                to={`/incoming/${r.incomingId}`}
+                                className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
+                              >
+                                عرض
+                              </Link>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
                   ) : (
                     <tr>
-                      <td colSpan={8} className="p-4 text-center text-gray-500">
+                      <td colSpan={11} className="p-4 text-center text-gray-500">
                         لا توجد عناصر
                       </td>
                     </tr>
@@ -539,23 +648,23 @@ export default function MyDeskPage() {
 
             {/* صفحات */}
             <div className="flex items-center justify-between mt-3 text-sm">
-              <div>الإجمالي: {data?.total ?? 0}</div>
+              <div>الإجمالي: {total}</div>
               <div className="flex items-center gap-2">
                 <button
-                  disabled={(data?.page ?? 1) <= 1}
+                  disabled={currentPage <= 1}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   className="rounded-lg border px-3 py-1 disabled:opacity-50"
                 >
                   السابق
                 </button>
                 <span>
-                  صفحة {data?.page ?? 1} / {data?.pages ?? 1}
+                  صفحة {currentPage} / {totalPages}
                 </span>
                 <button
-                  disabled={(data?.page ?? 1) >= (data?.pages ?? 1)}
+                  disabled={currentPage >= totalPages}
                   onClick={() =>
                     setPage((p) =>
-                      data?.pages ? Math.min(data.pages, p + 1) : p + 1
+                      totalPages ? Math.min(totalPages, p + 1) : p + 1
                     )
                   }
                   className="rounded-lg border px-3 py-1 disabled:opacity-50"
@@ -780,17 +889,17 @@ export default function MyDeskPage() {
 
 
 
-// // // src/pages/MyDeskPage.tsx
+// // src/pages/MyDeskPage.tsx
 
-// import { useEffect, useMemo, useState } from "react";
+// import { useEffect, useMemo, useRef, useState } from "react";
 // import { Link } from "react-router-dom";
 // import api from "../api/apiClient";
 
 // type Dept = { id: number; name: string; status?: string };
-// type UserLite = { id: number; fullName: string; departmentId: number|null };
+// type UserLite = { id: number; fullName: string; departmentId: number | null };
 
 // type Row = {
-//   id: string;                 // distributionId
+//   id: string; // distributionId
 //   distributionId: string;
 //   status: "Open" | "InProgress" | "Closed" | "Escalated";
 //   lastUpdateAt?: string;
@@ -798,7 +907,7 @@ export default function MyDeskPage() {
 //   incomingNumber?: string;
 //   receivedDate?: string;
 //   externalPartyName?: string;
-//   document?: { id: string | number; title: string } | null;
+//   document?: { id: string; title: string } | null; // ← توحيد كـ string
 // };
 
 // type Resp = {
@@ -822,11 +931,25 @@ export default function MyDeskPage() {
 //   });
 // }
 
+// function badgeCls(status: Row["status"]) {
+//   switch (status) {
+//     case "Open":
+//       return "bg-blue-100 text-blue-700";
+//     case "InProgress":
+//       return "bg-amber-100 text-amber-700";
+//     case "Closed":
+//       return "bg-emerald-100 text-emerald-700";
+//     default:
+//       return "bg-rose-100 text-rose-700";
+//   }
+// }
+
 // export default function MyDeskPage() {
 //   // فلاتر نص/تاريخ
-//   const [q, setQ] = useState("");
+//   const [qInput, setQInput] = useState("");
+//   const [q, setQ] = useState(""); // debounced value
 //   const [from, setFrom] = useState(""); // YYYY-MM-DD
-//   const [to, setTo] = useState("");     // YYYY-MM-DD
+//   const [to, setTo] = useState(""); // YYYY-MM-DD
 //   const [page, setPage] = useState(1);
 //   const [pageSize] = useState(20);
 
@@ -836,7 +959,7 @@ export default function MyDeskPage() {
 //   const [incomingNumber, setIncomingNumber] = useState("");
 //   const [distributionId, setDistributionId] = useState("");
 
-//   // مصادر القوائم (للفلاتر + النماذج)
+//   // مصادر القوائم
 //   const [departments, setDepartments] = useState<Dept[]>([]);
 //   const [usersFilter, setUsersFilter] = useState<UserLite[]>([]);
 //   const [loadingUsersFilter, setLoadingUsersFilter] = useState(false);
@@ -846,11 +969,22 @@ export default function MyDeskPage() {
 //   const [loading, setLoading] = useState(true);
 //   const [err, setErr] = useState<string | null>(null);
 
+//   // ===== Debounce لحقل البحث =====
+//   useEffect(() => {
+//     const t = setTimeout(() => {
+//       setPage(1);
+//       setQ(qInput.trim());
+//     }, 350);
+//     return () => clearTimeout(t);
+//   }, [qInput]);
+
 //   // تحميل الإدارات مرة واحدة
 //   useEffect(() => {
 //     (async () => {
 //       try {
-//         const res = await api.get<Dept[]>('/departments', { params: { status: 'Active' }});
+//         const res = await api.get<Dept[]>("/departments", {
+//           params: { status: "Active" },
+//         });
 //         setDepartments(Array.isArray(res.data) ? res.data : []);
 //       } catch {}
 //     })();
@@ -867,7 +1001,9 @@ export default function MyDeskPage() {
 //         const res = await api.get<UserLite[]>(`/users/by-department/${deptId}`);
 //         setUsersFilter(Array.isArray(res.data) ? res.data : []);
 //       } catch {}
-//       finally { setLoadingUsersFilter(false); }
+//       finally {
+//         setLoadingUsersFilter(false);
+//       }
 //     })();
 //   }, [deptId]);
 
@@ -875,7 +1011,7 @@ export default function MyDeskPage() {
 //     const p = new URLSearchParams();
 //     p.set("page", String(page));
 //     p.set("pageSize", String(pageSize));
-//     if (q.trim()) p.set("q", q.trim());
+//     if (q) p.set("q", q);
 //     if (from) p.set("from", from);
 //     if (to) p.set("to", to);
 //     if (deptId) p.set("deptId", deptId);
@@ -885,28 +1021,45 @@ export default function MyDeskPage() {
 //     return p.toString();
 //   }, [page, pageSize, q, from, to, deptId, assigneeId, incomingNumber, distributionId]);
 
+//   // إلغاء الطلب السابق عند تغيّر المعاملات
+//   const abortRef = useRef<AbortController | null>(null);
+
 //   async function load() {
+//     abortRef.current?.abort();
+//     const ctrl = new AbortController();
+//     abortRef.current = ctrl;
+
 //     setErr(null);
 //     setLoading(true);
 //     try {
-//       const res = await api.get<Resp>(`/incoming/my-desk?${params}`);
+//       const res = await api.get<Resp>(`/incoming/my-desk?${params}`, {
+//         signal: ctrl.signal as any,
+//       });
 //       setData(res.data);
 //     } catch (e: any) {
-//       setErr(e?.response?.data?.message ?? "فشل تحميل البيانات");
+//       // تجاهل الإلغاء
+//       if (e?.name !== "CanceledError" && e?.code !== "ERR_CANCELED") {
+//         setErr(e?.response?.data?.message ?? "فشل تحميل البيانات");
+//       }
 //     } finally {
 //       setLoading(false);
 //     }
 //   }
 
-//   useEffect(() => { load(); /* eslint-disable-next-line */ }, [params]);
+//   useEffect(() => {
+//     load();
+//     // إلغاء عند التفكيك
+//     return () => abortRef.current?.abort();
+//     // eslint-disable-next-line react-hooks/exhaustive-deps
+//   }, [params]);
 
 //   // ==== إجراءات سريعة (نماذج سفليّة) ====
-
 //   const [actLoading, setActLoading] = useState(false);
 
 //   // تغيير الحالة
 //   const [statusDistId, setStatusDistId] = useState<string>("");
-//   const [statusNew, setStatusNew] = useState<"Open"|"InProgress"|"Closed"|"Escalated">("InProgress");
+//   const [statusNew, setStatusNew] =
+//     useState<"Open" | "InProgress" | "Closed" | "Escalated">("InProgress");
 //   const [statusNote, setStatusNote] = useState("");
 
 //   // تعيين مكلّف — (قائمة مستقلة عن فلاتر أعلى الجدول)
@@ -924,10 +1077,14 @@ export default function MyDeskPage() {
 //       if (!assignDept) return;
 //       setAssignUsersLoading(true);
 //       try {
-//         const res = await api.get<UserLite[]>(`/users/by-department/${assignDept}`);
+//         const res = await api.get<UserLite[]>(
+//           `/users/by-department/${assignDept}`
+//         );
 //         setAssignUsers(Array.isArray(res.data) ? res.data : []);
 //       } catch {}
-//       finally { setAssignUsersLoading(false); }
+//       finally {
+//         setAssignUsersLoading(false);
+//       }
 //     })();
 //   }, [assignDept]);
 
@@ -950,7 +1107,9 @@ export default function MyDeskPage() {
 //         const res = await api.get<UserLite[]>(`/users/by-department/${fwdDept}`);
 //         setFwdUsers(Array.isArray(res.data) ? res.data : []);
 //       } catch {}
-//       finally { setFwdUsersLoading(false); }
+//       finally {
+//         setFwdUsersLoading(false);
+//       }
 //     })();
 //   }, [fwdDept]);
 
@@ -1016,38 +1175,66 @@ export default function MyDeskPage() {
 //     }
 //   }
 
+//   function resetFilters() {
+//     setQInput("");
+//     setQ("");
+//     setFrom("");
+//     setTo("");
+//     setDeptId("");
+//     setAssigneeId("");
+//     setIncomingNumber("");
+//     setDistributionId("");
+//     setPage(1);
+//   }
+
 //   return (
 //     <div className="space-y-6" dir="rtl">
 //       <header className="flex items-center justify-between">
 //         <div>
-//           <h1 className="text-2xl font-bold">طاولتي</h1>
-//           <p className="text-sm text-gray-500 mt-1">كل التوزيعات المفتوحة/تحت الإجراء المرتبطة بك أو بقسمك</p>
+//           <h1 className="text-2xl font-bold">مكتبي</h1>
+//           <p className="text-sm text-gray-500 mt-1">
+//             كل التوزيعات المفتوحة/تحت الإجراء المرتبطة بك أو بإدارتك/قسمك
+//           </p>
 //         </div>
 //       </header>
 
 //       {/* فلاتر أعلى الجدول */}
 //       <section className="bg-white border rounded-2xl shadow-sm p-4">
-//         <div className="grid lg:grid-cols-7 sm:grid-cols-3 grid-cols-1 gap-3 text-sm">
+//         <div className="grid lg:grid-cols-8 sm:grid-cols-3 grid-cols-1 gap-3 text-sm">
 //           <div className="lg:col-span-2">
 //             <label className="text-xs text-gray-500">بحث (رقم/عنوان/جهة)</label>
-//             <input className="w-full border rounded-xl p-2"
-//               value={q}
-//               onChange={(e)=>{ setPage(1); setQ(e.target.value); }}
-//               placeholder="..." />
+//             <input
+//               className="w-full border rounded-xl p-2"
+//               value={qInput}
+//               onChange={(e) => setQInput(e.target.value)}
+//               placeholder="..."
+//             />
 //           </div>
 
 //           <div>
 //             <label className="text-xs text-gray-500">من تاريخ</label>
-//             <input className="w-full border rounded-xl p-2" type="date"
+//             <input
+//               className="w-full border rounded-xl p-2"
+//               type="date"
 //               value={from}
-//               onChange={(e)=>{ setPage(1); setFrom(e.target.value); }} />
+//               onChange={(e) => {
+//                 setPage(1);
+//                 setFrom(e.target.value);
+//               }}
+//             />
 //           </div>
 
 //           <div>
 //             <label className="text-xs text-gray-500">إلى تاريخ</label>
-//             <input className="w-full border rounded-xl p-2" type="date"
+//             <input
+//               className="w-full border rounded-xl p-2"
+//               type="date"
 //               value={to}
-//               onChange={(e)=>{ setPage(1); setTo(e.target.value); }} />
+//               onChange={(e) => {
+//                 setPage(1);
+//                 setTo(e.target.value);
+//               }}
+//             />
 //           </div>
 
 //           <div>
@@ -1055,9 +1242,17 @@ export default function MyDeskPage() {
 //             <select
 //               className="w-full border rounded-xl p-2 bg-white"
 //               value={deptId}
-//               onChange={(e)=>{ setPage(1); setDeptId(e.target.value); }}>
+//               onChange={(e) => {
+//                 setPage(1);
+//                 setDeptId(e.target.value);
+//               }}
+//             >
 //               <option value="">الكل</option>
-//               {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+//               {departments.map((d) => (
+//                 <option key={d.id} value={d.id}>
+//                   {d.name}
+//                 </option>
+//               ))}
 //             </select>
 //           </div>
 
@@ -1066,32 +1261,61 @@ export default function MyDeskPage() {
 //             <select
 //               className="w-full border rounded-xl p-2 bg-white"
 //               value={assigneeId}
-//               onChange={(e)=>{ setPage(1); setAssigneeId(e.target.value); }}
-//               disabled={!deptId || loadingUsersFilter}>
-//               <option value="">{loadingUsersFilter ? "جاري التحميل..." : "الكل"}</option>
-//               {usersFilter.map(u => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+//               onChange={(e) => {
+//                 setPage(1);
+//                 setAssigneeId(e.target.value);
+//               }}
+//               disabled={!deptId || loadingUsersFilter}
+//             >
+//               <option value="">
+//                 {loadingUsersFilter ? "جاري التحميل..." : "الكل"}
+//               </option>
+//               {usersFilter.map((u) => (
+//                 <option key={u.id} value={u.id}>
+//                   {u.fullName}
+//                 </option>
+//               ))}
 //             </select>
 //           </div>
 
 //           <div>
 //             <label className="text-xs text-gray-500">رقم الوارد</label>
-//             <input className="w-full border rounded-xl p-2"
+//             <input
+//               className="w-full border rounded-xl p-2"
 //               value={incomingNumber}
-//               onChange={(e)=>{ setPage(1); setIncomingNumber(e.target.value); }}
-//               placeholder="مثال: 2025/000123" />
+//               onChange={(e) => {
+//                 setPage(1);
+//                 setIncomingNumber(e.target.value);
+//               }}
+//               placeholder="مثال: 2025/000123"
+//             />
 //           </div>
 
 //           <div>
 //             <label className="text-xs text-gray-500">رقم التوزيع</label>
-//             <input className="w-full border rounded-xl p-2"
+//             <input
+//               className="w-full border rounded-xl p-2"
 //               value={distributionId}
-//               onChange={(e)=>{ setPage(1); setDistributionId(e.target.value); }}
-//               placeholder="ID" />
+//               onChange={(e) => {
+//                 setPage(1);
+//                 setDistributionId(e.target.value);
+//               }}
+//               placeholder="ID"
+//             />
 //           </div>
 
-//           <div className="flex items-end">
-//             <button onClick={()=>load()} className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2">
+//           <div className="flex items-end gap-2">
+//             <button
+//               onClick={() => load()}
+//               className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2"
+//             >
 //               تحديث
+//             </button>
+//             <button
+//               onClick={resetFilters}
+//               className="w-full border rounded-xl px-4 py-2"
+//             >
+//               إعادة تعيين
 //             </button>
 //           </div>
 //         </div>
@@ -1119,45 +1343,86 @@ export default function MyDeskPage() {
 //                   </tr>
 //                 </thead>
 //                 <tbody>
-//                   {data?.rows?.length ? data.rows.map(r => (
-//                     <tr key={r.distributionId} className="border-t">
-//                       <td className="p-2">{r.distributionId}</td>
-//                       <td className="p-2">
-//                         {r.incomingId ? (
-//                           <Link className="text-blue-600 hover:underline font-mono"
-//                                 to={`/incoming/${r.incomingId}`}>{r.incomingNumber ?? r.incomingId}</Link>
-//                         ) : "—"}
-//                       </td>
-//                       <td className="p-2">{r.document?.title ?? "—"}</td>
-//                       <td className="p-2">{r.externalPartyName ?? "—"}</td>
-//                       <td className="p-2">{fmtDT(r.receivedDate)}</td>
-//                       <td className="p-2">
-//                         <span className={[
-//                           "inline-flex items-center px-2 py-0.5 rounded-full text-xs",
-//                           r.status==="Open" ? "bg-blue-100 text-blue-700" :
-//                           r.status==="InProgress" ? "bg-amber-100 text-amber-700" :
-//                           r.status==="Closed" ? "bg-emerald-100 text-emerald-700" :
-//                           "bg-rose-100 text-rose-700"
-//                         ].join(" ")}>{r.status}</span>
-//                       </td>
-//                       <td className="p-2">{fmtDT(r.lastUpdateAt)}</td>
-//                       <td className="p-2">
-//                         <div className="flex flex-wrap items-center gap-2">
-//                           <button
-//                             onClick={() => { setStatusDistId(r.distributionId); setStatusNew("InProgress"); setStatusNote(""); }}
-//                             className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50">حالة</button>
-//                           <button
-//                             onClick={() => { setAssignDistId(r.distributionId); setAssignDept(""); setAssignUser(""); setAssignNote(""); }}
-//                             className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50">تعيين</button>
-//                           <button
-//                             onClick={() => { setFwdIncomingId(r.incomingId); setFwdDept(""); setFwdUser(""); setFwdClosePrev(true); setFwdNote(""); }}
-//                             className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50">إحالة</button>
-//                           <Link to={`/incoming/${r.incomingId}`} className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50">عرض</Link>
-//                         </div>
+//                   {data?.rows?.length ? (
+//                     data.rows.map((r) => (
+//                       <tr key={r.distributionId} className="border-t">
+//                         <td className="p-2">{r.distributionId}</td>
+//                         <td className="p-2">
+//                           {r.incomingId ? (
+//                             <Link
+//                               className="text-blue-600 hover:underline font-mono"
+//                               to={`/incoming/${r.incomingId}`}
+//                             >
+//                               {r.incomingNumber ?? r.incomingId}
+//                             </Link>
+//                           ) : (
+//                             "—"
+//                           )}
+//                         </td>
+//                         <td className="p-2">{r.document?.title ?? "—"}</td>
+//                         <td className="p-2">{r.externalPartyName ?? "—"}</td>
+//                         <td className="p-2">{fmtDT(r.receivedDate)}</td>
+//                         <td className="p-2">
+//                           <span
+//                             className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${badgeCls(
+//                               r.status
+//                             )}`}
+//                           >
+//                             {r.status}
+//                           </span>
+//                         </td>
+//                         <td className="p-2">{fmtDT(r.lastUpdateAt)}</td>
+//                         <td className="p-2">
+//                           <div className="flex flex-wrap items-center gap-2">
+//                             <button
+//                               onClick={() => {
+//                                 setStatusDistId(r.distributionId);
+//                                 setStatusNew("InProgress");
+//                                 setStatusNote("");
+//                               }}
+//                               className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
+//                             >
+//                               حالة
+//                             </button>
+//                             <button
+//                               onClick={() => {
+//                                 setAssignDistId(r.distributionId);
+//                                 setAssignDept("");
+//                                 setAssignUser("");
+//                                 setAssignNote("");
+//                               }}
+//                               className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
+//                             >
+//                               تعيين
+//                             </button>
+//                             <button
+//                               onClick={() => {
+//                                 setFwdIncomingId(r.incomingId);
+//                                 setFwdDept("");
+//                                 setFwdUser("");
+//                                 setFwdClosePrev(true);
+//                                 setFwdNote("");
+//                               }}
+//                               className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
+//                             >
+//                               إحالة
+//                             </button>
+//                             <Link
+//                               to={`/incoming/${r.incomingId}`}
+//                               className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
+//                             >
+//                               عرض
+//                             </Link>
+//                           </div>
+//                         </td>
+//                       </tr>
+//                     ))
+//                   ) : (
+//                     <tr>
+//                       <td colSpan={8} className="p-4 text-center text-gray-500">
+//                         لا توجد عناصر
 //                       </td>
 //                     </tr>
-//                   )) : (
-//                     <tr><td colSpan={8} className="p-4 text-center text-gray-500">لا توجد عناصر</td></tr>
 //                   )}
 //                 </tbody>
 //               </table>
@@ -1169,13 +1434,25 @@ export default function MyDeskPage() {
 //               <div className="flex items-center gap-2">
 //                 <button
 //                   disabled={(data?.page ?? 1) <= 1}
-//                   onClick={() => setPage(p => Math.max(1, p - 1))}
-//                   className="rounded-lg border px-3 py-1 disabled:opacity-50">السابق</button>
-//                 <span>صفحة {data?.page ?? 1} / {data?.pages ?? 1}</span>
+//                   onClick={() => setPage((p) => Math.max(1, p - 1))}
+//                   className="rounded-lg border px-3 py-1 disabled:opacity-50"
+//                 >
+//                   السابق
+//                 </button>
+//                 <span>
+//                   صفحة {data?.page ?? 1} / {data?.pages ?? 1}
+//                 </span>
 //                 <button
 //                   disabled={(data?.page ?? 1) >= (data?.pages ?? 1)}
-//                   onClick={() => setPage(p => (data?.pages ? Math.min(data.pages, p + 1) : p + 1))}
-//                   className="rounded-lg border px-3 py-1 disabled:opacity-50">التالي</button>
+//                   onClick={() =>
+//                     setPage((p) =>
+//                       data?.pages ? Math.min(data.pages, p + 1) : p + 1
+//                     )
+//                   }
+//                   className="rounded-lg border px-3 py-1 disabled:opacity-50"
+//                 >
+//                   التالي
+//                 </button>
 //               </div>
 //             </div>
 //           </>
@@ -1185,15 +1462,27 @@ export default function MyDeskPage() {
 //       {/* نماذج صغيرة سريعة */}
 //       <section className="grid md:grid-cols-3 gap-4">
 //         {/* تغيير الحالة */}
-//         <form onSubmit={applyStatus} className="bg-white border rounded-2xl shadow-sm p-4 space-y-2">
+//         <form
+//           onSubmit={applyStatus}
+//           className="bg-white border rounded-2xl shadow-sm p-4 space-y-2"
+//         >
 //           <div className="font-semibold">تغيير حالة توزيع</div>
 //           <div>
 //             <label className="text-xs text-gray-500"># توزيع</label>
-//             <input className="w-full border rounded-xl p-2" value={statusDistId} onChange={e=>setStatusDistId(e.target.value)} placeholder="رقم التوزيع" />
+//             <input
+//               className="w-full border rounded-xl p-2"
+//               value={statusDistId}
+//               onChange={(e) => setStatusDistId(e.target.value)}
+//               placeholder="رقم التوزيع"
+//             />
 //           </div>
 //           <div>
 //             <label className="text-xs text-gray-500">الحالة الجديدة</label>
-//             <select className="w-full border rounded-xl p-2 bg-white" value={statusNew} onChange={e=>setStatusNew(e.target.value as any)}>
+//             <select
+//               className="w-full border rounded-xl p-2 bg-white"
+//               value={statusNew}
+//               onChange={(e) => setStatusNew(e.target.value as any)}
+//             >
 //               <option value="Open">Open</option>
 //               <option value="InProgress">InProgress</option>
 //               <option value="Closed">Closed</option>
@@ -1202,99 +1491,174 @@ export default function MyDeskPage() {
 //           </div>
 //           <div>
 //             <label className="text-xs text-gray-500">ملاحظة</label>
-//             <input className="w-full border rounded-xl p-2" value={statusNote} onChange={e=>setStatusNote(e.target.value)} placeholder="اختياري" />
+//             <input
+//               className="w-full border rounded-xl p-2"
+//               value={statusNote}
+//               onChange={(e) => setStatusNote(e.target.value)}
+//               placeholder="اختياري"
+//             />
 //           </div>
 //           <div>
-//             <button disabled={actLoading} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2">
+//             <button
+//               disabled={actLoading}
+//               className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2"
+//             >
 //               {actLoading ? "..." : "تطبيق الحالة"}
 //             </button>
 //           </div>
 //         </form>
 
 //         {/* تعيين مكلّف */}
-//         <form onSubmit={applyAssign} className="bg-white border rounded-2xl shadow-sm p-4 space-y-2">
+//         <form
+//           onSubmit={applyAssign}
+//           className="bg-white border rounded-2xl shadow-sm p-4 space-y-2"
+//         >
 //           <div className="font-semibold">تعيين مكلّف</div>
 
 //           <div>
 //             <label className="text-xs text-gray-500"># توزيع</label>
-//             <input className="w-full border rounded-xl p-2" value={assignDistId} onChange={e=>setAssignDistId(e.target.value)} placeholder="رقم التوزيع" />
+//             <input
+//               className="w-full border rounded-xl p-2"
+//               value={assignDistId}
+//               onChange={(e) => setAssignDistId(e.target.value)}
+//               placeholder="رقم التوزيع"
+//             />
 //           </div>
 
 //           <div>
 //             <label className="text-xs text-gray-500">الإدارة</label>
-//             <select className="w-full border rounded-xl p-2 bg-white"
+//             <select
+//               className="w-full border rounded-xl p-2 bg-white"
 //               value={assignDept}
-//               onChange={(e)=>setAssignDept(e.target.value)}>
+//               onChange={(e) => setAssignDept(e.target.value)}
+//             >
 //               <option value="">اختر قسمًا</option>
-//               {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+//               {departments.map((d) => (
+//                 <option key={d.id} value={d.id}>
+//                   {d.name}
+//                 </option>
+//               ))}
 //             </select>
 //           </div>
 
 //           <div>
 //             <label className="text-xs text-gray-500">المكلّف</label>
-//             <select className="w-full border rounded-xl p-2 bg-white"
+//             <select
+//               className="w-full border rounded-xl p-2 bg-white"
 //               value={assignUser}
-//               onChange={(e)=>setAssignUser(e.target.value)}
-//               disabled={!assignDept || assignUsersLoading}>
-//               <option value="">{assignUsersLoading ? "جاري التحميل..." : "اختر مستخدمًا"}</option>
-//               {assignUsers.map(u => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+//               onChange={(e) => setAssignUser(e.target.value)}
+//               disabled={!assignDept || assignUsersLoading}
+//             >
+//               <option value="">
+//                 {assignUsersLoading ? "جاري التحميل..." : "اختر مستخدمًا"}
+//               </option>
+//               {assignUsers.map((u) => (
+//                 <option key={u.id} value={u.id}>
+//                   {u.fullName}
+//                 </option>
+//               ))}
 //             </select>
 //           </div>
 
 //           <div>
 //             <label className="text-xs text-gray-500">ملاحظة</label>
-//             <input className="w-full border rounded-xl p-2" value={assignNote} onChange={e=>setAssignNote(e.target.value)} placeholder="اختياري" />
+//             <input
+//               className="w-full border rounded-xl p-2"
+//               value={assignNote}
+//               onChange={(e) => setAssignNote(e.target.value)}
+//               placeholder="اختياري"
+//             />
 //           </div>
 
 //           <div>
-//             <button disabled={actLoading} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2">
+//             <button
+//               disabled={actLoading}
+//               className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2"
+//             >
 //               {actLoading ? "..." : "تطبيق التعيين"}
 //             </button>
 //           </div>
 //         </form>
 
 //         {/* إحالة وارد */}
-//         <form onSubmit={applyForward} className="bg-white border rounded-2xl shadow-sm p-4 space-y-2">
+//         <form
+//           onSubmit={applyForward}
+//           className="bg-white border rounded-2xl shadow-sm p-4 space-y-2"
+//         >
 //           <div className="font-semibold">إحالة وارد</div>
 
 //           <div>
 //             <label className="text-xs text-gray-500"># الوارد</label>
-//             <input className="w-full border rounded-xl p-2" value={fwdIncomingId} onChange={e=>setFwdIncomingId(e.target.value)} placeholder="رقم الوارد" />
+//             <input
+//               className="w-full border rounded-xl p-2"
+//               value={fwdIncomingId}
+//               onChange={(e) => setFwdIncomingId(e.target.value)}
+//               placeholder="رقم الوارد"
+//             />
 //           </div>
 
 //           <div>
 //             <label className="text-xs text-gray-500">القسم المستهدف</label>
-//             <select className="w-full border rounded-xl p-2 bg-white"
+//             <select
+//               className="w-full border rounded-xl p-2 bg-white"
 //               value={fwdDept}
-//               onChange={(e)=>setFwdDept(e.target.value)}>
+//               onChange={(e) => setFwdDept(e.target.value)}
+//             >
 //               <option value="">اختر قسمًا</option>
-//               {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+//               {departments.map((d) => (
+//                 <option key={d.id} value={d.id}>
+//                   {d.name}
+//                 </option>
+//               ))}
 //             </select>
 //           </div>
 
 //           <div>
 //             <label className="text-xs text-gray-500">المكلّف (اختياري)</label>
-//             <select className="w-full border rounded-xl p-2 bg-white"
+//             <select
+//               className="w-full border rounded-xl p-2 bg-white"
 //               value={fwdUser}
-//               onChange={(e)=>setFwdUser(e.target.value)}
-//               disabled={!fwdDept || fwdUsersLoading}>
-//               <option value="">{fwdUsersLoading ? "جاري التحميل..." : "—"}</option>
-//               {fwdUsers.map(u => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+//               onChange={(e) => setFwdUser(e.target.value)}
+//               disabled={!fwdDept || fwdUsersLoading}
+//             >
+//               <option value="">
+//                 {fwdUsersLoading ? "جاري التحميل..." : "—"}
+//               </option>
+//               {fwdUsers.map((u) => (
+//                 <option key={u.id} value={u.id}>
+//                   {u.fullName}
+//                 </option>
+//               ))}
 //             </select>
 //           </div>
 
 //           <div className="flex items-center gap-2">
-//             <input id="closePrev" type="checkbox" checked={fwdClosePrev} onChange={e=>setFwdClosePrev(e.target.checked)} />
-//             <label htmlFor="closePrev" className="text-sm">إغلاق التوزيع السابق تلقائيًا</label>
+//             <input
+//               id="closePrev"
+//               type="checkbox"
+//               checked={fwdClosePrev}
+//               onChange={(e) => setFwdClosePrev(e.target.checked)}
+//             />
+//             <label htmlFor="closePrev" className="text-sm">
+//               إغلاق التوزيع السابق تلقائيًا
+//             </label>
 //           </div>
 
 //           <div>
 //             <label className="text-xs text-gray-500">ملاحظة</label>
-//             <input className="w-full border rounded-xl p-2" value={fwdNote} onChange={e=>setFwdNote(e.target.value)} placeholder="اختياري" />
+//             <input
+//               className="w-full border rounded-xl p-2"
+//               value={fwdNote}
+//               onChange={(e) => setFwdNote(e.target.value)}
+//               placeholder="اختياري"
+//             />
 //           </div>
 
 //           <div>
-//             <button disabled={actLoading} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2">
+//             <button
+//               disabled={actLoading}
+//               className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2"
+//             >
 //               {actLoading ? "..." : "تنفيذ الإحالة"}
 //             </button>
 //           </div>
@@ -1303,6 +1667,5 @@ export default function MyDeskPage() {
 //     </div>
 //   );
 // }
-
 
 

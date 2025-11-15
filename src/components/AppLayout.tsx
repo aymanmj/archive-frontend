@@ -11,6 +11,9 @@ import { Menu, X, ChevronLeft } from "lucide-react";
 import clsx from "clsx";
 import { usePermissions } from "../permissions/PermissionsContext";
 
+// ✅ الجرس فقط (بدون استخدام notiStore هنا)
+import Bell from "./Bell";
+
 function NavItem({
   to,
   icon,
@@ -59,7 +62,6 @@ export default function AppLayout() {
   const user = useAuthStore((s) => s.user);
   const { mode, resolved, setMode } = useThemeStore();
 
-  // ⬅️ صلاحيات
   const { ready, has } = usePermissions();
 
   const onLogout = () => {
@@ -79,7 +81,6 @@ export default function AppLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [open, setOpen] = useState(false);
 
-  // Skeleton للقائمة أثناء تحميل/مزامنة الصلاحيات
   const SidebarSkeleton = (
     <div className="space-y-2">
       <div className="h-8 rounded-lg bg-gray-100 dark:bg-white/10 animate-pulse" />
@@ -89,7 +90,10 @@ export default function AppLayout() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 dark:text-slate-100 transition-colors" dir="rtl">
+    <div
+      className="min-h-screen bg-slate-50 dark:bg-slate-900 dark:text-slate-100 transition-colors"
+      dir="rtl"
+    >
       {/* Header */}
       <header className="sticky top-0 z-30 bg-white/90 dark:bg-slate-950/80 backdrop-blur border-b border-gray-200 dark:border-white/10">
         <div className="max-w-7xl mx-auto px-3 md:px-4 py-3 flex items-center justify-between gap-3">
@@ -106,20 +110,31 @@ export default function AppLayout() {
             <Link to="/dashboard" className="font-bold text-lg">
               السرايا للأرشفة الإلكترونية
             </Link>
-            <span className="text-xs text-gray-500 dark:text-gray-400">نسخة تجريبية</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              نسخة تجريبية
+            </span>
           </div>
 
           <div className="flex items-center gap-2">
             {/* زر طي/فتح السايدبار للديسكتوب */}
             <button
               onClick={() => setCollapsed((c) => !c)}
-              className="hidden md:inline-flex rounded-xl border px-2 py-2 hover:bg-gray-50 dark:hover:bg:white/10 dark:border-white/20"
+              className="hidden md:inline-flex rounded-xl border px-2 py-2 hover:bg-gray-50 dark:hover:bg-white/10 dark:border-white/20"
               aria-label="طي/فتح القائمة"
             >
-              <ChevronLeft className={clsx("size-5 transition-transform", collapsed ? "rotate-180" : "")} />
+              <ChevronLeft
+                className={clsx(
+                  "size-5 transition-transform",
+                  collapsed ? "rotate-180" : ""
+                )}
+              />
             </button>
 
             <ThemeToggle />
+
+            {/* 🔔 الجرس */}
+            <Bell />
+
             <span className="text-sm text-gray-600 dark:text-gray-300 hidden sm:block">
               مرحبًا، {user?.fullName ?? "مستخدم"}
             </span>
@@ -140,14 +155,17 @@ export default function AppLayout() {
             ) : (
               <nav className="space-y-1">
                 <NavItem to="/dashboard">لوحة التحكم</NavItem>
-
                 {has("incoming.read") && <NavItem to="/incoming">الوارد</NavItem>}
                 {has("outgoing.read") && <NavItem to="/outgoing">الصادر</NavItem>}
-                {has("departments.read") && <NavItem to="/departments">الأقسام</NavItem>}
+                {has("departments.read") && (
+                  <NavItem to="/departments">الأقسام</NavItem>
+                )}
                 {has("users.read") && <NavItem to="/my-desk">مكتبي</NavItem>}
                 {has("audit.read") && <NavItem to="/audit">سجل التدقيق</NavItem>}
                 {has("admin.rbac") && <NavItem to="/rbac">إدارة الصلاحيات</NavItem>}
-                {has("users.manage") && <NavItem to="/usersadmin">إدارة المستخدمين</NavItem>}
+                {has("users.manage") && (
+                  <NavItem to="/usersadmin">إدارة المستخدمين</NavItem>
+                )}
               </nav>
             )}
           </aside>
@@ -190,45 +208,77 @@ export default function AppLayout() {
             {!ready ? (
               <div className="space-y-2">
                 <div className="h-8 rounded-lg bg-gray-100 dark:bg-white/10 animate-pulse" />
-                <div className="h-8 rounded-lg bg-gray-100 dark:bg:white/10 animate-pulse" />
+                <div className="h-8 rounded-lg bg-gray-100 dark:bg-white/10 animate-pulse" />
               </div>
             ) : (
               <nav className="space-y-1">
-                <NavLink to="/dashboard" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+                <NavLink
+                  to="/dashboard"
+                  onClick={() => setOpen(false)}
+                  className="block rounded-xl px-3 py-2 hover:bg-gray-100"
+                >
                   لوحة التحكم
                 </NavLink>
                 {has("incoming.read") && (
-                  <NavLink to="/incoming" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+                  <NavLink
+                    to="/incoming"
+                    onClick={() => setOpen(false)}
+                    className="block rounded-xl px-3 py-2 hover:bg-gray-100"
+                  >
                     الوارد
                   </NavLink>
                 )}
                 {has("outgoing.read") && (
-                  <NavLink to="/outgoing" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+                  <NavLink
+                    to="/outgoing"
+                    onClick={() => setOpen(false)}
+                    className="block rounded-xl px-3 py-2 hover:bg-gray-100"
+                  >
                     الصادر
                   </NavLink>
                 )}
                 {has("departments.read") && (
-                  <NavLink to="/departments" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+                  <NavLink
+                    to="/departments"
+                    onClick={() => setOpen(false)}
+                    className="block rounded-xl px-3 py-2 hover:bg-gray-100"
+                  >
                     الأقسام
                   </NavLink>
                 )}
                 {has("users.read") && (
-                  <NavLink to="/my-desk" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+                  <NavLink
+                    to="/my-desk"
+                    onClick={() => setOpen(false)}
+                    className="block rounded-xl px-3 py-2 hover:bg-gray-100"
+                  >
                     مكتبي
                   </NavLink>
                 )}
                 {has("audit.read") && (
-                  <NavLink to="/audit" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+                  <NavLink
+                    to="/audit"
+                    onClick={() => setOpen(false)}
+                    className="block rounded-xl px-3 py-2 hover:bg-gray-100"
+                  >
                     سجل التدقيق
                   </NavLink>
                 )}
                 {has("admin.rbac") && (
-                  <NavLink to="/rbac" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+                  <NavLink
+                    to="/rbac"
+                    onClick={() => setOpen(false)}
+                    className="block rounded-xl px-3 py-2 hover:bg-gray-100"
+                  >
                     إدارة الصلاحيات
                   </NavLink>
                 )}
                 {has("users.manage") && (
-                  <NavLink to="/usersadmin" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+                  <NavLink
+                    to="/usersadmin"
+                    onClick={() => setOpen(false)}
+                    className="block rounded-xl px-3 py-2 hover:bg-gray-100"
+                  >
                     إدارة المستخدمين
                   </NavLink>
                 )}
@@ -252,18 +302,23 @@ export default function AppLayout() {
 
 
 
+
 // // src/components/AppLayout.tsx
 
 // import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 // import Button from "./ui/Button";
 // import { useAuthStore } from "../stores/authStore";
-// import PermissionsGate from "./PermissionsGate";
 // import React, { useEffect, useState } from "react";
 // import { Toaster } from "sonner";
 // import ThemeToggle from "./ThemeToggle";
 // import { useThemeStore } from "../stores/themeStore";
 // import { Menu, X, ChevronLeft } from "lucide-react";
 // import clsx from "clsx";
+// import { usePermissions } from "../permissions/PermissionsContext";
+
+// // ✅ الجرس
+// import Bell from "./Bell";
+// import { useNotiStore } from "../stores/notiStore";
 
 // function NavItem({
 //   to,
@@ -312,7 +367,13 @@ export default function AppLayout() {
 //   const logout = useAuthStore((s) => s.logout);
 //   const user = useAuthStore((s) => s.user);
 //   const { mode, resolved, setMode } = useThemeStore();
-//   const isInit = useAuthStore((s) => s.isInitializing);
+
+//   // ⬅️ صلاحيات
+//   const { ready, has } = usePermissions();
+
+//   // ⬅️ إشعارات
+//   const fetchNotis = useNotiStore((s) => s.fetchOnce);
+//   const connectSocket = useNotiStore((s) => s.connectSocket);
 
 //   const onLogout = () => {
 //     logout();
@@ -328,8 +389,36 @@ export default function AppLayout() {
 //     // eslint-disable-next-line react-hooks/exhaustive-deps
 //   }, []);
 
+//   useEffect(() => {
+//     if (user?.id) {
+//       connectSocket(user.id);
+//     }
+//   }, [user?.id, connectSocket]);
+
+//   // أول ما يفتح ال Layout نحمل الإشعارات مرة واحدة
+//   // useEffect(() => {
+//   //   fetchNotis().catch((err) => {
+//   //     console.error("Failed to fetch notifications", err);
+//   //   });
+//   // }, [fetchNotis]);
+
+//   useEffect(() => {
+//     if (!fetchNotis) return;
+//     fetchNotis().catch((err) => {
+//       console.error("Failed to fetch notifications", err);
+//     });
+//   }, [fetchNotis]);
+
 //   const [collapsed, setCollapsed] = useState(false);
 //   const [open, setOpen] = useState(false);
+
+//   const SidebarSkeleton = (
+//     <div className="space-y-2">
+//       <div className="h-8 rounded-lg bg-gray-100 dark:bg-white/10 animate-pulse" />
+//       <div className="h-8 rounded-lg bg-gray-100 dark:bg-white/10 animate-pulse" />
+//       <div className="h-8 rounded-lg bg-gray-100 dark:bg-white/10 animate-pulse" />
+//     </div>
+//   );
 
 //   return (
 //     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 dark:text-slate-100 transition-colors" dir="rtl">
@@ -356,13 +445,17 @@ export default function AppLayout() {
 //             {/* زر طي/فتح السايدبار للديسكتوب */}
 //             <button
 //               onClick={() => setCollapsed((c) => !c)}
-//               className="hidden md:inline-flex rounded-xl border px-2 py-2 hover:bg-gray-50 dark:hover:bg-white/10 dark:border-white/20"
+//               className="hidden md:inline-flex rounded-xl border px-2 py-2 hover:bg-gray-50 dark:hover:bg:white/10 dark:border-white/20"
 //               aria-label="طي/فتح القائمة"
 //             >
 //               <ChevronLeft className={clsx("size-5 transition-transform", collapsed ? "rotate-180" : "")} />
 //             </button>
 
 //             <ThemeToggle />
+
+//             {/* 🔔 جرس الإشعارات */}
+//             <Bell />
+
 //             <span className="text-sm text-gray-600 dark:text-gray-300 hidden sm:block">
 //               مرحبًا، {user?.fullName ?? "مستخدم"}
 //             </span>
@@ -378,41 +471,19 @@ export default function AppLayout() {
 //         <div className="grid grid-cols-1 md:grid-cols-[224px_1fr] gap-6">
 //           {/* Sidebar Desktop */}
 //           <aside className="hidden md:block bg-white dark:bg-slate-950 border dark:border-white/10 rounded-2xl p-3 h-max sticky top-[76px]">
-//             {isInit ? (
-//               <div className="space-y-2">
-//                 <div className="h-8 rounded-lg bg-gray-100 dark:bg-white/10 animate-pulse" />
-//                 <div className="h-8 rounded-lg bg-gray-100 dark:bg-white/10 animate-pulse" />
-//                 <div className="h-8 rounded-lg bg-gray-100 dark:bg-white/10 animate-pulse" />
-//               </div>
+//             {!ready ? (
+//               SidebarSkeleton
 //             ) : (
 //               <nav className="space-y-1">
 //                 <NavItem to="/dashboard">لوحة التحكم</NavItem>
 
-//                 <PermissionsGate one="incoming.read">
-//                   <NavItem to="/incoming">الوارد</NavItem>
-//                 </PermissionsGate>
-
-//                 <PermissionsGate one="outgoing.read">
-//                   <NavItem to="/outgoing">الصادر</NavItem>
-//                 </PermissionsGate>
-
-//                 <PermissionsGate one="departments.read">
-//                   <NavItem to="/departments">الأقسام</NavItem>
-//                 </PermissionsGate>
-
-//                 <PermissionsGate one="users.read">
-//                   <NavItem to="/my-desk">مكتبي</NavItem>
-//                 </PermissionsGate>
-
-//                 <PermissionsGate one="audit.read">
-//                   <NavItem to="/audit">سجل التدقيق</NavItem>
-//                 </PermissionsGate>
-//                 <PermissionsGate one="admin.rbac">
-//                   <NavItem to="/rbac">إدارة الصلاحيات</NavItem>
-//                 </PermissionsGate>
-//                 <PermissionsGate one="users.manage">
-//                   <NavItem to="/usersadmin">إدارة المستخدمين</NavItem>
-//                 </PermissionsGate>
+//                 {has("incoming.read") && <NavItem to="/incoming">الوارد</NavItem>}
+//                 {has("outgoing.read") && <NavItem to="/outgoing">الصادر</NavItem>}
+//                 {has("departments.read") && <NavItem to="/departments">الأقسام</NavItem>}
+//                 {has("users.read") && <NavItem to="/my-desk">مكتبي</NavItem>}
+//                 {has("audit.read") && <NavItem to="/audit">سجل التدقيق</NavItem>}
+//                 {has("admin.rbac") && <NavItem to="/rbac">إدارة الصلاحيات</NavItem>}
+//                 {has("users.manage") && <NavItem to="/usersadmin">إدارة المستخدمين</NavItem>}
 //               </nav>
 //             )}
 //           </aside>
@@ -452,13 +523,53 @@ export default function AppLayout() {
 //                 <X className="size-5" />
 //               </button>
 //             </div>
-//             <nav className="space-y-1">
-//               <NavLink to="/dashboard" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">لوحة التحكم</NavLink>
-//               <NavLink to="/incoming" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">الوارد</NavLink>
-//               <NavLink to="/outgoing" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">الصادر</NavLink>
-//               <NavLink to="/departments" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">الأقسام</NavLink>
-//               <NavLink to="/my-desk" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">مكتبي</NavLink>
-//             </nav>
+//             {!ready ? (
+//               <div className="space-y-2">
+//                 <div className="h-8 rounded-lg bg-gray-100 dark:bg-white/10 animate-pulse" />
+//                 <div className="h-8 rounded-lg bg-gray-100 dark:bg:white/10 animate-pulse" />
+//               </div>
+//             ) : (
+//               <nav className="space-y-1">
+//                 <NavLink to="/dashboard" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+//                   لوحة التحكم
+//                 </NavLink>
+//                 {has("incoming.read") && (
+//                   <NavLink to="/incoming" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+//                     الوارد
+//                   </NavLink>
+//                 )}
+//                 {has("outgoing.read") && (
+//                   <NavLink to="/outgoing" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+//                     الصادر
+//                   </NavLink>
+//                 )}
+//                 {has("departments.read") && (
+//                   <NavLink to="/departments" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+//                     الأقسام
+//                   </NavLink>
+//                 )}
+//                 {has("users.read") && (
+//                   <NavLink to="/my-desk" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+//                     مكتبي
+//                   </NavLink>
+//                 )}
+//                 {has("audit.read") && (
+//                   <NavLink to="/audit" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+//                     سجل التدقيق
+//                   </NavLink>
+//                 )}
+//                 {has("admin.rbac") && (
+//                   <NavLink to="/rbac" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+//                     إدارة الصلاحيات
+//                   </NavLink>
+//                 )}
+//                 {has("users.manage") && (
+//                   <NavLink to="/usersadmin" onClick={() => setOpen(false)} className="block rounded-xl px-3 py-2 hover:bg-gray-100">
+//                     إدارة المستخدمين
+//                   </NavLink>
+//                 )}
+//               </nav>
+//             )}
 //           </aside>
 //         </div>
 //       )}
@@ -474,4 +585,5 @@ export default function AppLayout() {
 //     </div>
 //   );
 // }
+
 
