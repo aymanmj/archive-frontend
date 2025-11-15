@@ -341,30 +341,7 @@ export default function UsersAdminPage() {
           </button>
 
           {/* زر إصدار رابط إعادة التعيين + عرض النتيجة */}
-{/*          <div style={{ marginTop: 12, borderTop: "1px solid #eee", paddingTop: 12 }}>
-            <div style={{ fontWeight: 600, marginBottom: 6 }}>إعادة تعيين كلمة المرور</div>
-            <button
-              onClick={handleIssueReset}
-              disabled={!selectedUserId || issuing}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 10,
-                border: "none",
-                background: issuing ? "#94a3b8" : "#10b981",
-                color: "#fff",
-                cursor: issuing ? "not-allowed" : "pointer",
-              }}
-            >
-              {issuing ? "جاري الإصدار…" : "إصدار رابط إعادة تعيين"}
-            </button>
-            {issuedInfo && (
-              <div style={{ marginTop: 8, fontSize: 13 }}>
-                <div>ينتهي في: {new Date(issuedInfo.expiresAt).toLocaleString("ar-LY")}</div>
-                <div style={{ wordBreak: "break-all" }}>الرمز: <code>{issuedInfo.token}</code></div>
-                {issuedInfo.url && <div style={{ wordBreak: "break-all" }}>الرابط: <a href={issuedInfo.url} target="_blank" rel="noreferrer">{issuedInfo.url}</a></div>}
-              </div>
-            )}
-          </div>*/}
+
           <div style={{ marginTop: 12, borderTop: "1px solid #eee", paddingTop: 12 }}>
             <div style={{ fontWeight: 600, marginBottom: 6 }}>إعادة تعيين كلمة المرور</div>
             <button

@@ -14,6 +14,14 @@ import TimelinePanel, { TimelineItem } from "../components/TimelinePanel";
 type Department = { id: number; name: string; status?: string };
 type UserLite   = { id: number; fullName: string; departmentId: number|null };
 
+// ✅ نوع معلومات الـ SLA القادمة من الـ backend
+type SlaInfo = {
+  status: "NoSla" | "OnTrack" | "DueSoon" | "Overdue";
+  dueAt: string | null;
+  minutesToDue: number | null;
+  isEscalated: boolean;
+};
+
 type Dist = {
   id: string;
   status: "Open"|"InProgress"|"Closed"|"Escalated";
@@ -21,10 +29,12 @@ type Dist = {
   assignedToUserName: string|null;
   lastUpdateAt: string;
   notes: string|null;
-  // SLA
+  // SLA raw
   dueAt: string | null;
   priority: number;
   escalationCount: number;
+  // ✅ معلومات SLA محسوبة من السيرفر
+  sla?: SlaInfo;
 };
 
 type Details = {
@@ -84,6 +94,54 @@ const errMsg = (e: any) =>
       : String(e.response.data.message)
     : (e?.message || "حدث خطأ");
 
+// ✅ دالة مساعدة لعرض Badge الـ SLA
+function renderSlaBadge(sla?: SlaInfo) {
+  if (!sla || sla.status === "NoSla") {
+    return <span className="text-xs text-gray-500">بدون SLA</span>;
+  }
+
+  let baseClass =
+    "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium";
+  let colorClass = "";
+  let label = "";
+
+  switch (sla.status) {
+    case "OnTrack":
+      colorClass = "bg-emerald-100 text-emerald-800";
+      label = "ضمن الوقت";
+      break;
+    case "DueSoon":
+      colorClass = "bg-amber-100 text-amber-800";
+      label = "قريب من الانتهاء";
+      break;
+    case "Overdue":
+      colorClass = "bg-red-100 text-red-800";
+      label = "متأخر";
+      break;
+  }
+
+  let extra = "";
+  if (typeof sla.minutesToDue === "number") {
+    const m = sla.minutesToDue;
+    const sign = m >= 0 ? "باقي" : "متأخر";
+    const abs = Math.abs(m);
+    if (abs >= 60) {
+      const hours = Math.round(abs / 60);
+      extra = ` — ${sign} حوالي ${hours} ساعة`;
+    } else {
+      extra = ` — ${sign} ${abs} دقيقة`;
+    }
+  }
+
+  const escalated = sla.isEscalated ? " — (تم التصعيد)" : "";
+
+  return (
+    <span className={`${baseClass} ${colorClass}`}>
+      {label}{extra}{escalated}
+    </span>
+  );
+}
+
 export default function IncomingDetailsPage() {
   const { id } = useParams();
 
@@ -129,34 +187,6 @@ export default function IncomingDetailsPage() {
   // تبويب SLA
   const [slaDueAt, setSlaDueAt] = useState<string>("");       // datetime-local
   const [slaPriority, setSlaPriority] = useState<number>(0);  // 0..N
-
-  // تحميل البيانات الأساسية
-  // useEffect(() => {
-  //   (async () => {
-  //     if (!id) return;
-  //     setLoading(true);
-  //     try {
-  //       const [det, deps] = await Promise.all([
-  //         api.get<Details>(`/incoming/${id}`),
-  //         api.get<Department[]>('/departments', { params: { status: 'Active' } }),
-  //       ]);
-  //       setDetails(det.data);
-  //       setDepartments(Array.isArray(deps.data) ? deps.data : []);
-
-  //       const auto =
-  //         det.data.distributions?.find(d => d.status==="Open" || d.status==="InProgress")
-  //         ?? det.data.distributions?.[0];
-  //       if (auto) {
-  //         setSelectedDistId(auto.id);
-  //         setSlaDueAt(fmtDateInputValue(auto.dueAt));
-  //         setSlaPriority(Number.isFinite(auto.priority) ? auto.priority : 0);
-  //       }
-  //     } catch {
-  //       toast.error("تعذّر تحميل التفاصيل");
-  //     }
-  //     finally { setLoading(false); }
-  //   })();
-  // }, [id]);
 
   useEffect(() => {
     (async () => {
@@ -230,27 +260,6 @@ export default function IncomingDetailsPage() {
     setSlaDueAt(fmtDateInputValue(d?.dueAt ?? null));
     setSlaPriority(Number.isFinite(d?.priority ?? 0) ? (d?.priority ?? 0) : 0);
   }, [selectedDistId, details]);
-
-  // const refreshDetails = async () => {
-  //   if (!id) return;
-  //   try {
-  //     const det = await api.get<Details>(`/incoming/${id}`);
-  //     setDetails(det.data);
-  //     if (det.data.distributions?.length) {
-  //       const keep = det.data.distributions.find(d => d.id === selectedDistId);
-  //       const active = keep ?? det.data.distributions.find(d => d.status==="Open" || d.status==="InProgress") ?? det.data.distributions[0];
-  //       if (active) {
-  //         setSelectedDistId(active.id);
-  //         setSlaDueAt(fmtDateInputValue(active.dueAt));
-  //         setSlaPriority(Number.isFinite(active.priority) ? active.priority : 0);
-  //       }
-  //     } else {
-  //       setSelectedDistId("");
-  //     }
-  //   } catch {
-  //     toast.error("تعذّر تحديث البيانات");
-  //   }
-  // };
 
   const refreshDetails = async () => {
     if (!id) return;
@@ -506,6 +515,8 @@ export default function IncomingDetailsPage() {
                     <th className="p-2 text-right">تاريخ الاستحقاق</th>
                     <th className="p-2 text-right">الأولوية</th>
                     <th className="p-2 text-right">التصعيدات</th>
+                    {/* ✅ عمود SLA */}
+                    <th className="p-2 text-right">SLA</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -519,9 +530,12 @@ export default function IncomingDetailsPage() {
                       <td className="p-2">{fmtDT(d.dueAt)}</td>
                       <td className="p-2">{Number.isFinite(d.priority) ? d.priority : 0}</td>
                       <td className="p-2">{Number.isFinite(d.escalationCount) ? d.escalationCount : 0}</td>
+                      <td className="p-2">
+                        {renderSlaBadge(d.sla)}
+                      </td>
                     </tr>
                   )) : (
-                    <tr><td colSpan={8} className="p-3 text-center text-gray-500">لا توجد توزيعات</td></tr>
+                    <tr><td colSpan={9} className="p-3 text-center text-gray-500">لا توجد توزيعات</td></tr>
                   )}
                 </tbody>
               </table>
@@ -722,7 +736,6 @@ export default function IncomingDetailsPage() {
         </PermissionsGate>
       )}
 
-
       {tab === "timeline" && (
         <TimelinePanel
           items={timeline}
@@ -780,6 +793,9 @@ export default function IncomingDetailsPage() {
 
 
 
+
+
+
 // // src/pages/IncomingDetailsPage.tsx
 
 // import { useEffect, useMemo, useState } from "react";
@@ -789,6 +805,9 @@ export default function IncomingDetailsPage() {
 // import type { PreviewFile } from "../components/files/FilePreview";
 // import { toast } from "sonner";
 // import PermissionsGate from "../components/PermissionsGate";
+
+// // ✅ السجل الزمني الجديد
+// import TimelinePanel, { TimelineItem } from "../components/TimelinePanel";
 
 // type Department = { id: number; name: string; status?: string };
 // type UserLite   = { id: number; fullName: string; departmentId: number|null };
@@ -832,16 +851,6 @@ export default function IncomingDetailsPage() {
 //   distributions: Dist[];
 // };
 
-// // متوافق مع شكل /incoming/:id/timeline
-// type TimelineItem = {
-//   at: string;
-//   actionType?: string;
-//   actionLabel?: string; // نستخدمه في العنوان
-//   by?: string | null;
-//   details?: string | null;
-//   link?: string | null;
-// };
-
 // function fmtDT(v?: string | null) {
 //   if (!v) return "—";
 //   const d = new Date(v);
@@ -877,9 +886,9 @@ export default function IncomingDetailsPage() {
 //   const { id } = useParams();
 
 //   const [details, setDetails] = useState<Details | null>(null);
-//   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
 //   const [loading, setLoading] = useState(true);
 //   const [tab, setTab] = useState<"overview"|"forward"|"assign"|"files"|"timeline"|"sla">("overview");
+//   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
 
 //   // ملفات (معاينة)
 //   const [previewOpen, setPreviewOpen] = useState(false);
@@ -919,24 +928,26 @@ export default function IncomingDetailsPage() {
 //   const [slaDueAt, setSlaDueAt] = useState<string>("");       // datetime-local
 //   const [slaPriority, setSlaPriority] = useState<number>(0);  // 0..N
 
-//   // تحميل البيانات الأساسية
 //   useEffect(() => {
 //     (async () => {
 //       if (!id) return;
 //       setLoading(true);
 //       try {
-//         const [det, tl, deps] = await Promise.all([
+//         const [det, deps, tl] = await Promise.all([
 //           api.get<Details>(`/incoming/${id}`),
-//           api.get<{items: TimelineItem[]}>(`/incoming/${id}/timeline`),
-//           api.get<Department[]>('/departments', { params: { status: 'Active' } }),
+//           api.get<Department[]>("/departments", { params: { status: "Active" } }),
+//           api.get<{ items: TimelineItem[] }>(`/incoming/${id}/timeline`),
 //         ]);
+
 //         setDetails(det.data);
-//         setTimeline(Array.isArray(tl.data.items) ? tl.data.items : []);
 //         setDepartments(Array.isArray(deps.data) ? deps.data : []);
+//         setTimeline(Array.isArray(tl.data.items) ? tl.data.items : []);
 
 //         const auto =
-//           det.data.distributions?.find(d => d.status==="Open" || d.status==="InProgress")
-//           ?? det.data.distributions?.[0];
+//           det.data.distributions?.find(
+//             (d) => d.status === "Open" || d.status === "InProgress",
+//           ) ?? det.data.distributions?.[0];
+
 //         if (auto) {
 //           setSelectedDistId(auto.id);
 //           setSlaDueAt(fmtDateInputValue(auto.dueAt));
@@ -944,8 +955,9 @@ export default function IncomingDetailsPage() {
 //         }
 //       } catch {
 //         toast.error("تعذّر تحميل التفاصيل");
+//       } finally {
+//         setLoading(false);
 //       }
-//       finally { setLoading(false); }
 //     })();
 //   }, [id]);
 
@@ -992,15 +1004,29 @@ export default function IncomingDetailsPage() {
 //   const refreshDetails = async () => {
 //     if (!id) return;
 //     try {
-//       const det = await api.get<Details>(`/incoming/${id}`);
+//       const [det, tl] = await Promise.all([
+//         api.get<Details>(`/incoming/${id}`),
+//         api.get<{ items: TimelineItem[] }>(`/incoming/${id}/timeline`),
+//       ]);
+
 //       setDetails(det.data);
+//       setTimeline(Array.isArray(tl.data.items) ? tl.data.items : []);
+
 //       if (det.data.distributions?.length) {
-//         const keep = det.data.distributions.find(d => d.id === selectedDistId);
-//         const active = keep ?? det.data.distributions.find(d => d.status==="Open" || d.status==="InProgress") ?? det.data.distributions[0];
+//         const keep = det.data.distributions.find((d) => d.id === selectedDistId);
+//         const active =
+//           keep ??
+//           det.data.distributions.find(
+//             (d) => d.status === "Open" || d.status === "InProgress",
+//           ) ??
+//           det.data.distributions[0];
+
 //         if (active) {
 //           setSelectedDistId(active.id);
 //           setSlaDueAt(fmtDateInputValue(active.dueAt));
-//           setSlaPriority(Number.isFinite(active.priority) ? active.priority : 0);
+//           setSlaPriority(
+//             Number.isFinite(active.priority) ? active.priority : 0,
+//           );
 //         }
 //       } else {
 //         setSelectedDistId("");
@@ -1445,26 +1471,13 @@ export default function IncomingDetailsPage() {
 //         </PermissionsGate>
 //       )}
 
-//       {tab==="timeline" && (
-//         <section className="bg-white border rounded-2xl shadow-sm p-4">
-//           <div className="space-y-3">
-//             {timeline.length ? timeline.map((t, i) => (
-//               <div key={i} className="border rounded-xl p-3">
-//                 <div className="text-xs text-gray-500">{fmtDT(t.at)}</div>
-//                 <div className="font-semibold">{t.actionLabel ?? "حدث"}</div>
-//                 {t.by && <div className="text-sm text-gray-600">بواسطة: {t.by}</div>}
-//                 {t.details && <div className="text-sm">{t.details}</div>}
-//                 {t.link && (
-//                   <div className="mt-1">
-//                     <a href={t.link} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline text-sm">فتح</a>
-//                   </div>
-//                 )}
-//               </div>
-//             )) : (
-//               <div className="text-sm text-gray-500">لا يوجد سجل زمني</div>
-//             )}
-//           </div>
-//         </section>
+
+//       {tab === "timeline" && (
+//         <TimelinePanel
+//           items={timeline}
+//           title="السجل الزمني"
+//           emptyMessage="لا يوجد سجل زمني"
+//         />
 //       )}
 
 //       {tab==="sla" && (
@@ -1512,5 +1525,4 @@ export default function IncomingDetailsPage() {
 //     </div>
 //   );
 // }
-
 

@@ -164,8 +164,9 @@ export async function consumePasswordReset(token: string, newPassword: string) {
 
 
 export async function unlockUserLogin(userId: number): Promise<void> {
-  await api.post(`/users/${userId}/unlock-login`);
+  await api.post("/auth/unlock-login", { userId });
 }
+
 
 
 
