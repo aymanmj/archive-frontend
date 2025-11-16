@@ -291,7 +291,7 @@ export default function AppLayout() {
                     onClick={() => setOpen(false)}
                     className="block rounded-xl px-3 py-2 hover:bg-gray-100"
                   >
-                    إتقارير SLA
+                   تقارير SLA
                   </Link>
                 )}
                 {has("admin.rbac") && (
