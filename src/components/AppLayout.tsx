@@ -158,7 +158,7 @@ export default function AppLayout() {
                 {has("incoming.read") && <NavItem to="/incoming">الوارد</NavItem>}
                 {has("outgoing.read") && <NavItem to="/outgoing">الصادر</NavItem>}
                 {has("departments.read") && (
-                  <NavItem to="/departments">الأقسام</NavItem>
+                  <NavItem to="/departments">الإدارات والأقسام</NavItem>
                 )}
                 {has("users.read") && <NavItem to="/my-desk">مكتبي</NavItem>}
                 {has("audit.read") && <NavItem to="/audit">سجل التدقيق</NavItem>}
@@ -166,6 +166,8 @@ export default function AppLayout() {
                 {has("users.manage") && (
                   <NavItem to="/usersadmin">إدارة المستخدمين</NavItem>
                 )}
+                {has("admin.rbac") && <NavItem to="/settings/sla">إعدادات SLA</NavItem>}
+
               </nav>
             )}
           </aside>
@@ -243,7 +245,7 @@ export default function AppLayout() {
                     onClick={() => setOpen(false)}
                     className="block rounded-xl px-3 py-2 hover:bg-gray-100"
                   >
-                    الأقسام
+                    الإدارات والأقسام
                   </NavLink>
                 )}
                 {has("users.read") && (
@@ -281,6 +283,15 @@ export default function AppLayout() {
                   >
                     إدارة المستخدمين
                   </NavLink>
+                )}
+                {has("admin.rbac") && (
+                  <Link
+                    to="/settings/sla"
+                    onClick={() => setOpen(false)}
+                    className="block rounded-xl px-3 py-2 hover:bg-gray-100"
+                  >
+                    إعدادات SLA
+                  </Link>
                 )}
               </nav>
             )}

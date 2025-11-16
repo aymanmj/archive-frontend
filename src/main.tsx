@@ -22,6 +22,7 @@ import UsersAdminPage from './pages/UsersAdminPage';
 import AuditPage from "./pages/AuditPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
+import SlaSettingsPage from "./pages/SlaSettingsPage";
 
 
 // ⬇️ مزوّد الصلاحيات
@@ -53,6 +54,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <Route path="/usersadmin" element={<UsersAdminPage />} />
                 <Route path="/audit" element={<AuditPage />} />
                 <Route path="/change-password" element={<ChangePasswordPage/>} />
+                <Route path="/settings/sla" element={<SlaSettingsPage />} />
               </Route>
             </Route>
           </Routes>

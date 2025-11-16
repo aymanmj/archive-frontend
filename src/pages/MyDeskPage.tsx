@@ -1,8 +1,10 @@
+
 // src/pages/MyDeskPage.tsx
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "../api/apiClient";
+import { toast } from "sonner";
 
 type Dept = { id: number; name: string; status?: string };
 type UserLite = { id: number; fullName: string; departmentId: number | null };
@@ -30,6 +32,15 @@ type Resp = {
   total: number;
   pages: number;
   rows: Row[];
+};
+
+type SlaSummary = {
+  total: number;
+  noSla: number;
+  onTrack: number;
+  dueSoon: number;
+  overdue: number;
+  escalated: number;
 };
 
 function fmtDT(v?: string | null) {
@@ -96,6 +107,10 @@ export default function MyDeskPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
+  // ملخص SLA
+  const [slaSummary, setSlaSummary] = useState<SlaSummary | null>(null);
+  const [loadingSlaSummary, setLoadingSlaSummary] = useState(false);
+
   // ===== Debounce لحقل البحث =====
   useEffect(() => {
     const t = setTimeout(() => {
@@ -148,7 +163,6 @@ export default function MyDeskPage() {
     if (assigneeId) p.set("assigneeId", assigneeId);
     if (incomingNumber.trim()) p.set("incomingNumber", incomingNumber.trim());
     if (distributionId.trim()) p.set("distributionId", distributionId.trim());
-    // if (bucket && bucket !== "all") p.set("bucket", bucket); // 👈 فلتر SLA
     if (bucket && bucket !== "all") p.set("scope", bucket);
     return p.toString();
   }, [
@@ -188,6 +202,33 @@ export default function MyDeskPage() {
       setLoading(false);
     }
   }
+
+  // تحميل ملخص SLA لمكتبي
+  useEffect(() => {
+    (async () => {
+      setLoadingSlaSummary(true);
+      try {
+        const res = await api.get<{
+          success: boolean;
+          data?: SlaSummary;
+          error?: { code: string; message: string };
+        }>("/incoming/my-desk/sla-summary");
+
+        if (res.data?.success && res.data.data) {
+          setSlaSummary(res.data.data);
+        } else {
+          toast.error(
+            res.data?.error?.message ||
+              "تعذّر تحميل ملخّص الـ SLA لمكتبي"
+          );
+        }
+      } catch (e: any) {
+        toast.error("خطأ أثناء تحميل ملخّص الـ SLA");
+      } finally {
+        setLoadingSlaSummary(false);
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     load();
@@ -506,6 +547,48 @@ export default function MyDeskPage() {
           الاستحقاق قد مضى.
         </div>
       </section>
+
+      {slaSummary && (
+        <section className="bg-white border rounded-2xl shadow-sm p-4 mb-4" dir="rtl">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold">ملخّص SLA لمكتبي</h3>
+            {loadingSlaSummary && (
+              <span className="text-xs text-gray-500">جارِ التحديث...</span>
+            )}
+          </div>
+
+          <div className="grid sm:grid-cols-5 gap-3 text-sm">
+            <div className="rounded-xl border p-3 bg-gray-50">
+              <div className="text-xs text-gray-500 mb-1">إجمالي المعاملات</div>
+              <div className="text-lg font-bold">{slaSummary.total}</div>
+            </div>
+
+            <div className="rounded-xl border p-3 bg-emerald-50">
+              <div className="text-xs text-gray-500 mb-1">ضمن الوقت</div>
+              <div className="text-lg font-bold">{slaSummary.onTrack}</div>
+            </div>
+
+            <div className="rounded-xl border p-3 bg-amber-50">
+              <div className="text-xs text-gray-500 mb-1">قريبة من الانتهاء</div>
+              <div className="text-lg font-bold">{slaSummary.dueSoon}</div>
+            </div>
+
+            <div className="rounded-xl border p-3 bg-red-50">
+              <div className="text-xs text-gray-500 mb-1">متأخرة</div>
+              <div className="text-lg font-bold">{slaSummary.overdue}</div>
+            </div>
+
+            <div className="rounded-xl border p-3 bg-rose-50">
+              <div className="text-xs text-gray-500 mb-1">تم التصعيد</div>
+              <div className="text-lg font-bold">{slaSummary.escalated}</div>
+            </div>
+          </div>
+
+          <div className="text-[11px] text-gray-500 mt-2">
+            * يُحتسب الملخّص فقط للمعاملات بحالة Open / InProgress / Escalated.
+          </div>
+        </section>
+      )}
 
       {/* جدول */}
       <section className="bg-white border rounded-2xl shadow-sm p-4">
@@ -899,7 +982,7 @@ export default function MyDeskPage() {
 // type UserLite = { id: number; fullName: string; departmentId: number | null };
 
 // type Row = {
-//   id: string; // distributionId
+//   id: string; // distributionId أو PK داخلي
 //   distributionId: string;
 //   status: "Open" | "InProgress" | "Closed" | "Escalated";
 //   lastUpdateAt?: string;
@@ -907,7 +990,12 @@ export default function MyDeskPage() {
 //   incomingNumber?: string;
 //   receivedDate?: string;
 //   externalPartyName?: string;
-//   document?: { id: string; title: string } | null; // ← توحيد كـ string
+//   document?: { id: string; title: string } | null;
+
+//   // حقول SLA / تصعيد
+//   dueAt?: string | null;
+//   priority?: number | null;
+//   escalationCount?: number | null;
 // };
 
 // type Resp = {
@@ -918,7 +1006,16 @@ export default function MyDeskPage() {
 //   rows: Row[];
 // };
 
-// function fmtDT(v?: string) {
+// type SlaSummary = {
+//   total: number;
+//   noSla: number;
+//   onTrack: number;
+//   dueSoon: number;
+//   overdue: number;
+//   escalated: number;
+// };
+
+// function fmtDT(v?: string | null) {
 //   if (!v) return "—";
 //   const d = new Date(v);
 //   if (isNaN(d.getTime())) return "—";
@@ -944,6 +1041,16 @@ export default function MyDeskPage() {
 //   }
 // }
 
+// function isOverdue(r: Row) {
+//   if (!r.dueAt) return false;
+//   if (r.status === "Closed") return false;
+//   const d = new Date(r.dueAt);
+//   if (isNaN(d.getTime())) return false;
+//   return d.getTime() < Date.now();
+// }
+
+// type Bucket = "all" | "overdue" | "today" | "week" | "escalated";
+
 // export default function MyDeskPage() {
 //   // فلاتر نص/تاريخ
 //   const [qInput, setQInput] = useState("");
@@ -958,6 +1065,9 @@ export default function MyDeskPage() {
 //   const [assigneeId, setAssigneeId] = useState<string>("");
 //   const [incomingNumber, setIncomingNumber] = useState("");
 //   const [distributionId, setDistributionId] = useState("");
+
+//   // فلتر "منظور" مكتبي (SLA)
+//   const [bucket, setBucket] = useState<Bucket>("all");
 
 //   // مصادر القوائم
 //   const [departments, setDepartments] = useState<Dept[]>([]);
@@ -986,7 +1096,9 @@ export default function MyDeskPage() {
 //           params: { status: "Active" },
 //         });
 //         setDepartments(Array.isArray(res.data) ? res.data : []);
-//       } catch {}
+//       } catch {
+//         // تجاهل الخطأ في الفلتر فقط
+//       }
 //     })();
 //   }, []);
 
@@ -1000,8 +1112,9 @@ export default function MyDeskPage() {
 //       try {
 //         const res = await api.get<UserLite[]>(`/users/by-department/${deptId}`);
 //         setUsersFilter(Array.isArray(res.data) ? res.data : []);
-//       } catch {}
-//       finally {
+//       } catch {
+//         // تجاهل
+//       } finally {
 //         setLoadingUsersFilter(false);
 //       }
 //     })();
@@ -1018,8 +1131,21 @@ export default function MyDeskPage() {
 //     if (assigneeId) p.set("assigneeId", assigneeId);
 //     if (incomingNumber.trim()) p.set("incomingNumber", incomingNumber.trim());
 //     if (distributionId.trim()) p.set("distributionId", distributionId.trim());
+//     // if (bucket && bucket !== "all") p.set("bucket", bucket); // 👈 فلتر SLA
+//     if (bucket && bucket !== "all") p.set("scope", bucket);
 //     return p.toString();
-//   }, [page, pageSize, q, from, to, deptId, assigneeId, incomingNumber, distributionId]);
+//   }, [
+//     page,
+//     pageSize,
+//     q,
+//     from,
+//     to,
+//     deptId,
+//     assigneeId,
+//     incomingNumber,
+//     distributionId,
+//     bucket,
+//   ]);
 
 //   // إلغاء الطلب السابق عند تغيّر المعاملات
 //   const abortRef = useRef<AbortController | null>(null);
@@ -1045,6 +1171,24 @@ export default function MyDeskPage() {
 //       setLoading(false);
 //     }
 //   }
+
+//   useEffect(() => {
+//     (async () => {
+//       setLoadingSlaSummary(true);
+//       try {
+//         const res = await api.get<SlaSummary>("/incoming/my-desk/sla-summary");
+//         if (res) {
+//           setSlaSummary(res.data);
+//         } else {
+//           toast.error("تعذّر تحميل ملخص الـ SLA لمكتبي");
+//         }
+//       } catch {
+//         toast.error("خطأ أثناء تحميل ملخص الـ SLA");
+//       } finally {
+//         setLoadingSlaSummary(false);
+//       }
+//     })();
+//   }, []);
 
 //   useEffect(() => {
 //     load();
@@ -1081,8 +1225,9 @@ export default function MyDeskPage() {
 //           `/users/by-department/${assignDept}`
 //         );
 //         setAssignUsers(Array.isArray(res.data) ? res.data : []);
-//       } catch {}
-//       finally {
+//       } catch {
+//         // تجاهل
+//       } finally {
 //         setAssignUsersLoading(false);
 //       }
 //     })();
@@ -1106,8 +1251,9 @@ export default function MyDeskPage() {
 //       try {
 //         const res = await api.get<UserLite[]>(`/users/by-department/${fwdDept}`);
 //         setFwdUsers(Array.isArray(res.data) ? res.data : []);
-//       } catch {}
-//       finally {
+//       } catch {
+//         // تجاهل
+//       } finally {
 //         setFwdUsersLoading(false);
 //       }
 //     })();
@@ -1184,8 +1330,13 @@ export default function MyDeskPage() {
 //     setAssigneeId("");
 //     setIncomingNumber("");
 //     setDistributionId("");
+//     setBucket("all");
 //     setPage(1);
 //   }
+
+//   const total = data?.total ?? 0;
+//   const currentPage = data?.page ?? 1;
+//   const totalPages = data?.pages ?? 1;
 
 //   return (
 //     <div className="space-y-6" dir="rtl">
@@ -1193,13 +1344,14 @@ export default function MyDeskPage() {
 //         <div>
 //           <h1 className="text-2xl font-bold">مكتبي</h1>
 //           <p className="text-sm text-gray-500 mt-1">
-//             كل التوزيعات المفتوحة/تحت الإجراء المرتبطة بك أو بإدارتك/قسمك
+//             كل التوزيعات المفتوحة/تحت الإجراء المرتبطة بك أو بإدارتك/قسمك، مع
+//             إبراز المتأخر منها بناءً على تاريخ الاستحقاق (SLA).
 //           </p>
 //         </div>
 //       </header>
 
 //       {/* فلاتر أعلى الجدول */}
-//       <section className="bg-white border rounded-2xl shadow-sm p-4">
+//       <section className="bg-white border rounded-2xl shadow-sm p-4 space-y-3">
 //         <div className="grid lg:grid-cols-8 sm:grid-cols-3 grid-cols-1 gap-3 text-sm">
 //           <div className="lg:col-span-2">
 //             <label className="text-xs text-gray-500">بحث (رقم/عنوان/جهة)</label>
@@ -1304,26 +1456,103 @@ export default function MyDeskPage() {
 //             />
 //           </div>
 
-//           <div className="flex items-end gap-2">
+//           <div className="flex flex-col sm:flex-row sm:items-end gap-2">
 //             <button
 //               onClick={() => load()}
-//               className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2"
+//               className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-2 min-w-[110px] whitespace-nowrap shrink-0"
 //             >
 //               تحديث
 //             </button>
 //             <button
 //               onClick={resetFilters}
-//               className="w-full border rounded-xl px-4 py-2"
+//               className="w-full sm:w-auto border rounded-xl px-4 py-2 text-sm text-gray-700 bg-white hover:bg-gray-50 min-w-[110px] whitespace-nowrap shrink-0"
 //             >
 //               إعادة تعيين
 //             </button>
 //           </div>
 //         </div>
+
+//         {/* أزرار منظور SLA السريع */}
+//         <div className="flex flex-wrap items-center gap-2 text-xs mt-2">
+//           <span className="text-gray-500">عرض سريع حسب تاريخ الاستحقاق:</span>
+//           {(
+//             [
+//               ["all", "الكل"],
+//               ["overdue", "متأخرة"],
+//               ["today", "مستحقة اليوم"],
+//               ["week", "هذا الأسبوع"],
+//               ["escalated", "تم تصعيدها"],
+//             ] as [Bucket, string][]
+//           ).map(([b, label]) => (
+//             <button
+//               key={b}
+//               onClick={() => {
+//                 setPage(1);
+//                 setBucket(b);
+//               }}
+//               className={[
+//                 "px-3 py-1 rounded-full border text-xs",
+//                 bucket === b
+//                   ? "bg-blue-600 text-white border-blue-600"
+//                   : "bg-white text-gray-700 hover:bg-gray-50",
+//               ].join(" ")}
+//             >
+//               {label}
+//             </button>
+//           ))}
+//         </div>
+//         <div className="text-[11px] text-gray-500 mt-1">
+//           يتم الاعتماد على حقل <span className="font-mono">dueAt</span> من
+//           التوزيع (SLA). التوزيعات المغلقة لا تُعتبر متأخرة حتى لو كان تاريخ
+//           الاستحقاق قد مضى.
+//         </div>
 //       </section>
+
+//       {slaSummary && (
+//         <section className="bg-white border rounded-2xl shadow-sm p-4 mb-4" dir="rtl">
+//           <div className="flex items-center justify-between mb-3">
+//             <h3 className="text-sm font-semibold">ملخّص SLA لمكتبي</h3>
+//             {loadingSlaSummary && (
+//               <span className="text-xs text-gray-500">جارِ التحديث...</span>
+//             )}
+//           </div>
+
+//           <div className="grid sm:grid-cols-5 gap-3 text-sm">
+//             <div className="rounded-xl border p-3 bg-gray-50">
+//               <div className="text-xs text-gray-500 mb-1">إجمالي المعاملات</div>
+//               <div className="text-lg font-bold">{slaSummary.total}</div>
+//             </div>
+
+//             <div className="rounded-xl border p-3 bg-emerald-50">
+//               <div className="text-xs text-gray-500 mb-1">ضمن الوقت</div>
+//               <div className="text-lg font-bold">{slaSummary.onTrack}</div>
+//             </div>
+
+//             <div className="rounded-xl border p-3 bg-amber-50">
+//               <div className="text-xs text-gray-500 mb-1">قريبة من الانتهاء</div>
+//               <div className="text-lg font-bold">{slaSummary.dueSoon}</div>
+//             </div>
+
+//             <div className="rounded-xl border p-3 bg-red-50">
+//               <div className="text-xs text-gray-500 mb-1">متأخرة</div>
+//               <div className="text-lg font-bold">{slaSummary.overdue}</div>
+//             </div>
+
+//             <div className="rounded-xl border p-3 bg-rose-50">
+//               <div className="text-xs text-gray-500 mb-1">تم التصعيد</div>
+//               <div className="text-lg font-bold">{slaSummary.escalated}</div>
+//             </div>
+//           </div>
+
+//           <div className="text-[11px] text-gray-500 mt-2">
+//             * يُحتسب الملخّص فقط للمعاملات بحالة Open / InProgress / Escalated.
+//           </div>
+//         </section>
+//       )}
 
 //       {/* جدول */}
 //       <section className="bg-white border rounded-2xl shadow-sm p-4">
-//         {err && <div className="text-sm text-red-600">{err}</div>}
+//         {err && <div className="text-sm text-red-600 mb-2">{err}</div>}
 //         {loading ? (
 //           <div className="text-sm text-gray-500">...جاري التحميل</div>
 //         ) : (
@@ -1337,6 +1566,9 @@ export default function MyDeskPage() {
 //                     <th className="p-2 text-right">عنوان الوثيقة</th>
 //                     <th className="p-2 text-right">الجهة</th>
 //                     <th className="p-2 text-right">تاريخ الاستلام</th>
+//                     <th className="p-2 text-right">تاريخ الاستحقاق</th>
+//                     <th className="p-2 text-right">الأولوية</th>
+//                     <th className="p-2 text-right">التصعيدات</th>
 //                     <th className="p-2 text-right">الحالة</th>
 //                     <th className="p-2 text-right">آخر تحديث</th>
 //                     <th className="p-2 text-right">إجراءات</th>
@@ -1344,82 +1576,111 @@ export default function MyDeskPage() {
 //                 </thead>
 //                 <tbody>
 //                   {data?.rows?.length ? (
-//                     data.rows.map((r) => (
-//                       <tr key={r.distributionId} className="border-t">
-//                         <td className="p-2">{r.distributionId}</td>
-//                         <td className="p-2">
-//                           {r.incomingId ? (
-//                             <Link
-//                               className="text-blue-600 hover:underline font-mono"
-//                               to={`/incoming/${r.incomingId}`}
+//                     data.rows.map((r) => {
+//                       const priority =
+//                         typeof r.priority === "number" &&
+//                         Number.isFinite(r.priority)
+//                           ? r.priority
+//                           : 0;
+//                       const escCount =
+//                         typeof r.escalationCount === "number" &&
+//                         Number.isFinite(r.escalationCount)
+//                           ? r.escalationCount
+//                           : 0;
+//                       const overdue = isOverdue(r);
+
+//                       return (
+//                         <tr
+//                           key={r.distributionId}
+//                           className={
+//                             "border-t " + (overdue ? "bg-rose-50" : "")
+//                           }
+//                         >
+//                           <td className="p-2">{r.distributionId}</td>
+//                           <td className="p-2">
+//                             {r.incomingId ? (
+//                               <Link
+//                                 className="text-blue-600 hover:underline font-mono"
+//                                 to={`/incoming/${r.incomingId}`}
+//                               >
+//                                 {r.incomingNumber ?? r.incomingId}
+//                               </Link>
+//                             ) : (
+//                               "—"
+//                             )}
+//                           </td>
+//                           <td className="p-2">{r.document?.title ?? "—"}</td>
+//                           <td className="p-2">
+//                             {r.externalPartyName ?? "—"}
+//                           </td>
+//                           <td className="p-2">{fmtDT(r.receivedDate)}</td>
+//                           <td className="p-2">{fmtDT(r.dueAt)}</td>
+//                           <td className="p-2">{priority}</td>
+//                           <td className="p-2">{escCount}</td>
+//                           <td className="p-2">
+//                             <span
+//                               className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${badgeCls(
+//                                 r.status
+//                               )}`}
 //                             >
-//                               {r.incomingNumber ?? r.incomingId}
-//                             </Link>
-//                           ) : (
-//                             "—"
-//                           )}
-//                         </td>
-//                         <td className="p-2">{r.document?.title ?? "—"}</td>
-//                         <td className="p-2">{r.externalPartyName ?? "—"}</td>
-//                         <td className="p-2">{fmtDT(r.receivedDate)}</td>
-//                         <td className="p-2">
-//                           <span
-//                             className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${badgeCls(
-//                               r.status
-//                             )}`}
-//                           >
-//                             {r.status}
-//                           </span>
-//                         </td>
-//                         <td className="p-2">{fmtDT(r.lastUpdateAt)}</td>
-//                         <td className="p-2">
-//                           <div className="flex flex-wrap items-center gap-2">
-//                             <button
-//                               onClick={() => {
-//                                 setStatusDistId(r.distributionId);
-//                                 setStatusNew("InProgress");
-//                                 setStatusNote("");
-//                               }}
-//                               className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
-//                             >
-//                               حالة
-//                             </button>
-//                             <button
-//                               onClick={() => {
-//                                 setAssignDistId(r.distributionId);
-//                                 setAssignDept("");
-//                                 setAssignUser("");
-//                                 setAssignNote("");
-//                               }}
-//                               className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
-//                             >
-//                               تعيين
-//                             </button>
-//                             <button
-//                               onClick={() => {
-//                                 setFwdIncomingId(r.incomingId);
-//                                 setFwdDept("");
-//                                 setFwdUser("");
-//                                 setFwdClosePrev(true);
-//                                 setFwdNote("");
-//                               }}
-//                               className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
-//                             >
-//                               إحالة
-//                             </button>
-//                             <Link
-//                               to={`/incoming/${r.incomingId}`}
-//                               className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
-//                             >
-//                               عرض
-//                             </Link>
-//                           </div>
-//                         </td>
-//                       </tr>
-//                     ))
+//                               {r.status}
+//                               {overdue && (
+//                                 <span className="ml-1 text-[10px] text-rose-700">
+//                                   (متأخرة)
+//                                 </span>
+//                               )}
+//                             </span>
+//                           </td>
+//                           <td className="p-2">{fmtDT(r.lastUpdateAt)}</td>
+//                           <td className="p-2">
+//                             <div className="flex flex-wrap items-center gap-2">
+//                               <button
+//                                 onClick={() => {
+//                                   setStatusDistId(r.distributionId);
+//                                   setStatusNew("InProgress");
+//                                   setStatusNote("");
+//                                 }}
+//                                 className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
+//                               >
+//                                 حالة
+//                               </button>
+//                               <button
+//                                 onClick={() => {
+//                                   setAssignDistId(r.distributionId);
+//                                   setAssignDept("");
+//                                   setAssignUser("");
+//                                   setAssignNote("");
+//                                 }}
+//                                 className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
+//                               >
+//                                 تعيين
+//                               </button>
+//                               <button
+//                                 onClick={() => {
+//                                   setFwdIncomingId(r.incomingId);
+//                                   setFwdDept("");
+//                                   setFwdUser("");
+//                                   setFwdClosePrev(true);
+//                                   setFwdNote("");
+//                                 }}
+//                                 className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
+//                               >
+//                                 إحالة
+//                               </button>
+//                               <Link
+//                                 to={`/incoming/${r.incomingId}`}
+//                                 className="text-xs rounded-lg border px-2 py-1 hover:bg-gray-50"
+//                               >
+//                                 عرض
+//                               </Link>
+//                             </div>
+//                           </td>
+//                         </tr>
+//                       );
+//                     })
 //                   ) : (
 //                     <tr>
-//                       <td colSpan={8} className="p-4 text-center text-gray-500">
+//                       <td colSpan={11} className="p-4 text-center text-gray-500">
 //                         لا توجد عناصر
 //                       </td>
 //                     </tr>
@@ -1430,23 +1691,23 @@ export default function MyDeskPage() {
 
 //             {/* صفحات */}
 //             <div className="flex items-center justify-between mt-3 text-sm">
-//               <div>الإجمالي: {data?.total ?? 0}</div>
+//               <div>الإجمالي: {total}</div>
 //               <div className="flex items-center gap-2">
 //                 <button
-//                   disabled={(data?.page ?? 1) <= 1}
+//                   disabled={currentPage <= 1}
 //                   onClick={() => setPage((p) => Math.max(1, p - 1))}
 //                   className="rounded-lg border px-3 py-1 disabled:opacity-50"
 //                 >
 //                   السابق
 //                 </button>
 //                 <span>
-//                   صفحة {data?.page ?? 1} / {data?.pages ?? 1}
+//                   صفحة {currentPage} / {totalPages}
 //                 </span>
 //                 <button
-//                   disabled={(data?.page ?? 1) >= (data?.pages ?? 1)}
+//                   disabled={currentPage >= totalPages}
 //                   onClick={() =>
 //                     setPage((p) =>
-//                       data?.pages ? Math.min(data.pages, p + 1) : p + 1
+//                       totalPages ? Math.min(totalPages, p + 1) : p + 1
 //                     )
 //                   }
 //                   className="rounded-lg border px-3 py-1 disabled:opacity-50"
@@ -1667,5 +1928,4 @@ export default function MyDeskPage() {
 //     </div>
 //   );
 // }
-
 
