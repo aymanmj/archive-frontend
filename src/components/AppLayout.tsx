@@ -167,6 +167,7 @@ export default function AppLayout() {
                   <NavItem to="/usersadmin">إدارة المستخدمين</NavItem>
                 )}
                 {has("admin.rbac") && <NavItem to="/settings/sla">إعدادات SLA</NavItem>}
+                {has("admin.rbac") && <NavItem to="/reports/sla">تقارير SLA</NavItem>}
 
               </nav>
             )}
@@ -283,6 +284,15 @@ export default function AppLayout() {
                   >
                     إدارة المستخدمين
                   </NavLink>
+                )}
+                {has("admin.rbac") && (
+                  <Link
+                    to="/reports/sla"
+                    onClick={() => setOpen(false)}
+                    className="block rounded-xl px-3 py-2 hover:bg-gray-100"
+                  >
+                    إتقارير SLA
+                  </Link>
                 )}
                 {has("admin.rbac") && (
                   <Link
