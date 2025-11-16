@@ -11,6 +11,7 @@ import { Menu, X, ChevronLeft } from "lucide-react";
 import clsx from "clsx";
 import { usePermissions } from "../permissions/PermissionsContext";
 
+
 // ✅ الجرس
 import Bell from "./Bell";
 
@@ -69,6 +70,8 @@ export default function AppLayout() {
 
   // 👇 من متجر الإشعارات
   const fetchNotiOnce = useNotiStore((s) => s.fetchOnce);
+  const connectNotiSocket = useNotiStore((s) => s.connectSocket);
+
 
   const onLogout = () => {
     logout();
@@ -98,15 +101,27 @@ export default function AppLayout() {
   // ✅ عند دخول المستخدم:
   // 1) تحميل الإشعارات مرة واحدة
   // 2) تهيئة WebSocket للإشعارات
+  // useEffect(() => {
+  //   if (!user?.id) return;
+
+  //   // تحميل الإشعارات من الـ API (أول مرة فقط)
+  //   fetchNotiOnce();
+
+  //   // تهيئة Socket.io والإنضمام لغرفة user:{id}
+  //   initNotiSocket(user.id);
+  // }, [user?.id, fetchNotiOnce]);
+
   useEffect(() => {
     if (!user?.id) return;
 
-    // تحميل الإشعارات من الـ API (أول مرة فقط)
+    // تحميل الإشعارات الموجودة مسبقًا (حتى يظهر العداد فورًا)
     fetchNotiOnce();
 
-    // تهيئة Socket.io والإنضمام لغرفة user:{id}
-    initNotiSocket(user.id);
-  }, [user?.id, fetchNotiOnce]);
+    // تشغيل WebSocket لاستقبال الإشعارات الجديدة
+    connectNotiSocket(user.id);
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   return (
     <div

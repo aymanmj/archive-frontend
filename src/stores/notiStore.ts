@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import apiClient from "../api/apiClient";
+import { io, Socket } from "socket.io-client";
 
 export type NotificationDto = {
   id: number;
@@ -20,13 +21,18 @@ type NotiState = {
   loaded: boolean;
   loading: boolean;
   error?: string;
+
+  // REST
   fetchOnce: () => Promise<void>;
   markAllAsRead: () => Promise<void>;
   markOneAsRead: (id: number) => Promise<void>;
 
-  // 👇 تُستخدم مع WebSocket لإضافة إشعار جديد لحظيًا
-  addRealtime: (n: NotificationDto) => void;
+  // WebSocket
+  connectSocket: (userId: number) => void;
 };
+
+// socket.io client (مستوى ملف، ليس داخل React)
+let socket: Socket | null = null;
 
 export const useNotiStore = create<NotiState>((set, get) => ({
   items: [],
@@ -35,7 +41,7 @@ export const useNotiStore = create<NotiState>((set, get) => ({
   loading: false,
   error: undefined,
 
-  // نحمل الإشعارات مرة واحدة فقط
+  // نحمل الإشعارات مرة واحدة (للبادئة)
   async fetchOnce() {
     const { loaded, loading } = get();
     if (loaded || loading) return;
@@ -66,7 +72,6 @@ export const useNotiStore = create<NotiState>((set, get) => ({
 
     if (!unreadIds.length) return;
 
-    // تحديث واجهة المستخدم مباشرة
     set({
       items: items.map((n) =>
         unreadIds.includes(n.id) ? { ...n, status: "Read" } : n
@@ -101,22 +106,75 @@ export const useNotiStore = create<NotiState>((set, get) => ({
     }
   },
 
-  // ✅ تُستدعى عند وصول إشعار جديد من WebSocket
-  addRealtime(n: NotificationDto) {
-    set((state) => {
-      // لو الإشعار موجود بالفعل لا نكرره (احتياط)
-      if (state.items.some((x) => x.id === n.id)) {
-        return state;
-      }
+  // اتصال WebSocket للحصول على إشعارات حية
+  connectSocket(userId: number) {
+    if (!userId) return;
 
-      const items = [n, ...state.items].slice(0, 50);
-      const unread = items.filter((i) => i.status === "Unread").length;
+    // لو فيه socket قديم متصل → فقط أرسل join وتوقّف
+    if (socket && socket.connected) {
+      socket.emit("join", { userId });
+      return;
+    }
 
-      return { ...state, items, unread };
+    // إنشاء socket جديد
+    socket = io(`${window.location.origin}/notifications`, {
+      path: "/socket.io",
+      transports: ["websocket", "polling"],
+      withCredentials: true,
+    });
+
+    socket.on("connect", () => {
+      console.log("[NOTI] socket connected", socket?.id);
+      socket?.emit("join", { userId });
+    });
+
+    socket.on("connect_error", (err) => {
+      console.error("[NOTI] socket connect_error", err);
+    });
+
+    // هذا الحدث يرسله الـ NotificationsGateway: emitToUsers(..., 'notify', payload)
+    socket.on("notify", (payload: any) => {
+      // نضمن شكل موحّد للإشعار
+      const n: NotificationDto = {
+        id: payload.id,
+        userId: payload.userId ?? userId,
+        title: payload.title,
+        body: payload.body,
+        link: payload.link ?? null,
+        severity: payload.severity ?? "info",
+        status: payload.status ?? "Unread",
+        createdAt:
+          typeof payload.createdAt === "string"
+            ? payload.createdAt
+            : new Date().toISOString(),
+      };
+
+      set((state) => {
+        const existingIndex = state.items.findIndex(
+          (x) => x.id === n.id
+        );
+
+        let items: NotificationDto[];
+        if (existingIndex >= 0) {
+          // لو الإشعار موجود مسبقًا -> نحدّثه
+          items = [...state.items];
+          items[existingIndex] = { ...items[existingIndex], ...n };
+        } else {
+          // نضيفه في الأعلى ونقصّ القائمة إلى 50 عنصر
+          items = [n, ...state.items].slice(0, 50);
+        }
+
+        const unread = items.filter((x) => x.status === "Unread").length;
+
+        return { items, unread };
+      });
+    });
+
+    socket.on("disconnect", () => {
+      console.log("[NOTI] socket disconnected");
     });
   },
 }));
-
 
 
 
@@ -143,10 +201,12 @@ export const useNotiStore = create<NotiState>((set, get) => ({
 //   loaded: boolean;
 //   loading: boolean;
 //   error?: string;
-//   // 👇 نسمح بإجبار إعادة التحميل force
-//   fetchOnce: (force?: boolean) => Promise<void>;
+//   fetchOnce: () => Promise<void>;
 //   markAllAsRead: () => Promise<void>;
 //   markOneAsRead: (id: number) => Promise<void>;
+
+//   // 👇 تُستخدم مع WebSocket لإضافة إشعار جديد لحظيًا
+//   addRealtime: (n: NotificationDto) => void;
 // };
 
 // export const useNotiStore = create<NotiState>((set, get) => ({
@@ -156,12 +216,10 @@ export const useNotiStore = create<NotiState>((set, get) => ({
 //   loading: false,
 //   error: undefined,
 
-//   // نحمل الإشعارات، ويمكن إجبار إعادة التحميل بتمرير force = true
-//   async fetchOnce(force = false) {
+//   // نحمل الإشعارات مرة واحدة فقط
+//   async fetchOnce() {
 //     const { loaded, loading } = get();
-
-//     // لو مش مجبر (force = false) وسبق التحميل أو الآن يحمل → لا نعيد
-//     if (!force && (loaded || loading)) return;
+//     if (loaded || loading) return;
 
 //     set({ loading: true, error: undefined });
 
@@ -173,14 +231,7 @@ export const useNotiStore = create<NotiState>((set, get) => ({
 //       const items = res.data ?? [];
 //       const unread = items.filter((n) => n.status === "Unread").length;
 
-//       set({
-//         items,
-//         unread,
-//         loaded: true,
-//         loading: false,
-//       });
-
-//       console.log("[notiStore] loaded notifications:", items);
+//       set({ items, unread, loaded: true, loading: false });
 //     } catch (err) {
 //       console.error("Failed to load notifications", err);
 //       set({ loading: false, error: "تعذر تحميل الإشعارات" });
@@ -196,6 +247,7 @@ export const useNotiStore = create<NotiState>((set, get) => ({
 
 //     if (!unreadIds.length) return;
 
+//     // تحديث واجهة المستخدم مباشرة
 //     set({
 //       items: items.map((n) =>
 //         unreadIds.includes(n.id) ? { ...n, status: "Read" } : n
@@ -229,7 +281,21 @@ export const useNotiStore = create<NotiState>((set, get) => ({
 //       console.error("Failed to mark notification as read", err);
 //     }
 //   },
-// }));
 
+//   // ✅ تُستدعى عند وصول إشعار جديد من WebSocket
+//   addRealtime(n: NotificationDto) {
+//     set((state) => {
+//       // لو الإشعار موجود بالفعل لا نكرره (احتياط)
+//       if (state.items.some((x) => x.id === n.id)) {
+//         return state;
+//       }
+
+//       const items = [n, ...state.items].slice(0, 50);
+//       const unread = items.filter((i) => i.status === "Unread").length;
+
+//       return { ...state, items, unread };
+//     });
+//   },
+// }));
 
 
