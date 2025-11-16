@@ -7,6 +7,8 @@ import { ArrowRightLeft, Inbox, Send, RefreshCw, LayoutGrid, Files, TrendingUp, 
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Line, Doughnut } from "react-chartjs-2";
+import SlaSummaryCards from "../components/dashboard/SlaSummaryCards";
+import { useNavigate } from "react-router-dom";
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement,
   ArcElement, Title as ChartTitle, Tooltip, Legend
@@ -27,9 +29,21 @@ type OverviewDTO = {
   myDesk: { open:number; inProgress:number; closed:number };
 };
 
+type MyDeskSlaSummary = {
+  total: number;
+  noSla: number;
+  onTrack: number;
+  dueSoon: number;
+  overdue: number;
+  escalated: number;
+};
+
 export default function DashboardPage() {
   const [data, setData] = useState<OverviewDTO | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const [slaSummary, setSlaSummary] = useState<MyDeskSlaSummary | null>(null);
+  const [loadingSlaSummary, setLoadingSlaSummary] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -47,23 +61,6 @@ export default function DashboardPage() {
 
   const incT = data?.totals?.incoming;
   const outT = data?.totals?.outgoing;
-
-  // دمج سلسلتين على محور واحد حتى لو اختلف الطول/التواريخ
-  // const merged30 = useMemo(() => {
-  //   const inc = data?.series30?.incoming ?? [];
-  //   const out = data?.series30?.outgoing ?? [];
-  //   const keys = new Set<string>();
-  //   inc.forEach(p => keys.add(p.date));
-  //   out.forEach(p => keys.add(p.date));
-  //   const labels = Array.from(keys).sort(); // تصاعدي
-  //   const incMap = new Map(inc.map(p => [p.date, p.count]));
-  //   const outMap = new Map(out.map(p => [p.date, p.count]));
-  //   return {
-  //     labels: labels.map(d => d.slice(5)), // MM-DD
-  //     incArr: labels.map(d => incMap.get(d) ?? 0),
-  //     outArr: labels.map(d => outMap.get(d) ?? 0),
-  //   };
-  // }, [data]);
 
   const merged30 = useMemo(() => {
     const inc = data?.series30?.incoming ?? [];
@@ -93,29 +90,37 @@ export default function DashboardPage() {
     return { labels: labelsShort, incArr, outArr };
   }, [data]);
 
-  // const totalsChart = useMemo(() => ({
-  //   labels: ['اليوم', 'هذا الأسبوع', 'هذا الشهر', 'الإجمالي'],
-  //   datasets: [
-  //     {
-  //       label: 'الوارد',
-  //       data: [incT?.today ?? 0, incT?.last7Days ?? 0, incT?.thisMonth ?? 0, incT?.all ?? 0],
-  //       fill: false,
-  //       borderColor: 'rgba(2,132,199,1)',
-  //       backgroundColor: 'rgba(2,132,199,0.15)',
-  //       tension: 0.2,
-  //       pointRadius: 3
-  //     },
-  //     {
-  //       label: 'الصادر',
-  //       data: [outT?.today ?? 0, outT?.last7Days ?? 0, outT?.thisMonth ?? 0, outT?.all ?? 0],
-  //       fill: false,
-  //       borderColor: 'rgba(124,58,237,1)',
-  //       backgroundColor: 'rgba(124,58,237,0.15)',
-  //       tension: 0.2,
-  //       pointRadius: 3
-  //     },
-  //   ],
-  // }), [incT, outT]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setLoadingSlaSummary(true);
+      try {
+        const res = await api.get<MyDeskSlaSummary>(
+          "/incoming/my-desk/sla-summary"
+        );
+
+        if (!cancelled) {
+          setSlaSummary(res.data);
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          toast.error("خطأ أثناء تحميل ملخّص الـ SLA لمكتبي");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingSlaSummary(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+
 
   const totalsChart = useMemo(() => {
     const incVals = [incT?.today ?? 0, incT?.last7Days ?? 0, incT?.thisMonth ?? 0, incT?.all ?? 0];
@@ -146,18 +151,6 @@ export default function DashboardPage() {
     };
   }, [incT, outT]);
 
-
-  // const totalsOptions = {
-  //   responsive: true,
-  //   plugins: {
-  //     legend: { position: 'top' as const },
-  //     tooltip: { mode: 'index' as const, intersect: false },
-  //   },
-  //   scales: {
-  //     x: { beginAtZero: true },
-  //     y: { beginAtZero: true, ticks: { precision: 0 } },
-  //   },
-  // };
 
   const totalsOptions = {
     responsive: true,
@@ -199,17 +192,7 @@ export default function DashboardPage() {
     ]
   }), [merged30]);
 
-  // const lineOptions = {
-  //   responsive: true,
-  //   maintainAspectRatio: false,
-  //   plugins: { legend: { position: "top" as const } },
-  //   interaction: { mode: "index" as const, intersect: false },
-  //   scales: {
-  //     x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 10 } },
-  //     y: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } }
-  //   }
-  // };
-
+  
   const lineOptions = {
     responsive: true,
     maintainAspectRatio: false,
@@ -237,6 +220,19 @@ export default function DashboardPage() {
       borderWidth: 1,
     }]
   } : null;
+
+  const navigate = useNavigate();
+
+  type SlaFilter = "all" | "noSla" | "onTrack" | "dueSoon" | "overdue" | "escalated";
+
+  const goToMyDesk = (filter: SlaFilter) => {
+    const params = new URLSearchParams();
+    if (filter !== "all") params.set("sla", filter);
+    navigate({
+      pathname: "/my-desk",
+      search: params.toString() ? `?${params.toString()}` : "",
+    });
+  };
 
   return (
     // <div className="space-y-6" dir="rtl">
@@ -330,6 +326,68 @@ export default function DashboardPage() {
               </div>
             </div>
           </section>
+          
+          {/*<section className="rounded-2xl border bg-gradient-to-br from-sky-50 p-4 shadow-[0_4px_20px_-8px_rgba(0,0,0,0.08)] p-4 space-y-4 min-w-0 overflow-hidden">
+              <SlaSummaryCards />
+          </section>*/}
+
+          {/* ملخص SLA لمعاملات مكتبي */}
+          <section className="bg-white dark:bg-slate-950 border dark:border-white/10 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold">ملخص SLA لمعاملات مكتبي</h2>
+              <span className="text-[11px] text-gray-500">
+                * يشمل التوزيعات بحالة Open / InProgress / Escalated فقط
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => goToMyDesk("noSla")}
+                className="rounded-xl border bg-gray-50 dark:bg-slate-900 dark:border-white/10 px-3 py-2 text-right hover:bg-gray-100 dark:hover:bg-white/10"
+              >
+                <div className="text-[11px] text-gray-500 mb-1">بدون SLA</div>
+                <div className="text-lg font-bold">{slaSummary?.noSla ?? 0}</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => goToMyDesk("onTrack")}
+                className="rounded-xl border bg-emerald-50 dark:bg-emerald-950/20 border-emerald-100 dark:border-emerald-500/40 px-3 py-2 text-right hover:bg-emerald-100/70 dark:hover:bg-emerald-900/50"
+              >
+                <div className="text-[11px] text-emerald-700 mb-1">على المسار الصحيح</div>
+                <div className="text-lg font-bold">{slaSummary?.onTrack ?? 0}</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => goToMyDesk("dueSoon")}
+                className="rounded-xl border bg-amber-50 dark:bg-amber-950/20 border-amber-100 dark:border-amber-500/40 px-3 py-2 text-right hover:bg-amber-100/70 dark:hover:bg-amber-900/40"
+              >
+                <div className="text-[11px] text-amber-700 mb-1">قريبة من الانتهاء</div>
+                <div className="text-lg font-bold">{slaSummary?.dueSoon ?? 0}</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => goToMyDesk("overdue")}
+                className="rounded-xl border bg-red-50 dark:bg-red-950/20 border-red-100 dark:border-red-500/40 px-3 py-2 text-right hover:bg-red-100/70 dark:hover:bg-red-900/40"
+              >
+                <div className="text-[11px] text-red-700 mb-1">متأخرة</div>
+                <div className="text-lg font-bold">{slaSummary?.overdue ?? 0}</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => goToMyDesk("escalated")}
+                className="rounded-xl border bg-indigo-50 dark:bg-indigo-950/20 border-indigo-100 dark:border-indigo-500/40 px-3 py-2 text-right hover:bg-indigo-100/70 dark:hover:bg-indigo-900/40"
+              >
+                <div className="text-[11px] text-indigo-700 mb-1">تم تصعيدها</div>
+                <div className="text-lg font-bold">{slaSummary?.escalated ?? 0}</div>
+              </button>
+            </div>
+          </section>
+
 
           {/* روابط سريعة + ملاحظات */}
           <section className="grid lg:grid-cols-3 gap-6">
