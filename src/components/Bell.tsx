@@ -105,6 +105,22 @@ export default function Bell() {
                 </div>
               </button>
             ))}
+
+            {/* 👇 هذا البلوك جديد أسفل القائمة */}
+            {!loading && items.length > 0 && (
+              <div className="px-3 py-2 text-[11px] text-right bg-gray-50 dark:bg-slate-800/60">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    navigate("/notifications");
+                  }}
+                  className="text-blue-600 hover:underline"
+                >
+                  عرض كل الإشعارات
+                </button>
+              </div>
+            )}
         </div>
       )}
     </div>

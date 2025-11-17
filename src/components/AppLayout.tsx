@@ -206,6 +206,9 @@ export default function AppLayout() {
                 {has("admin.rbac") && (
                   <NavItem to="/reports/sla">تقارير SLA</NavItem>
                 )}
+                {has("admin.rbac") && (
+                  <NavItem to="notifications">مركز الإشعارات</NavItem>
+                )}
               </nav>
             )}
           </aside>
@@ -338,6 +341,15 @@ export default function AppLayout() {
                     className="block rounded-xl px-3 py-2 hover:bg-gray-100"
                   >
                     إعدادات SLA
+                  </Link>
+                )}
+                {has("admin.rbac") && (
+                  <Link
+                    to="/notifications"
+                    onClick={() => setOpen(false)}
+                    className="block rounded-xl px-3 py-2 hover:bg-gray-100"
+                  >
+                    إمركز الإشعارات
                   </Link>
                 )}
               </nav>

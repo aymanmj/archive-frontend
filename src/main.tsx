@@ -24,6 +24,7 @@ import ChangePasswordPage from "./pages/ChangePasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import SlaSettingsPage from "./pages/SlaSettingsPage";
 import SlaReportsPage from "./pages/SlaReportsPage";
+import NotificationsPage from "./pages/NotificationsPage";
 
 
 // ⬇️ مزوّد الصلاحيات
@@ -57,6 +58,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <Route path="/change-password" element={<ChangePasswordPage/>} />
                 <Route path="/settings/sla" element={<SlaSettingsPage />} />
                 <Route path="/reports/sla" element={<SlaReportsPage />} />
+                <Route path="/notifications" element={<NotificationsPage />} />
               </Route>
             </Route>
           </Routes>
