@@ -17,7 +17,7 @@ import Bell from "./Bell";
 
 // ✅ إشعارات (store + socket)
 import { useNotiStore } from "../stores/notiStore";
-import { initNotiSocket } from "../realtime/notiSocket";
+// import { initNotiSocket } from "../realtime/notiSocket";
 
 function NavItem({
   to,
@@ -101,16 +101,7 @@ export default function AppLayout() {
   // ✅ عند دخول المستخدم:
   // 1) تحميل الإشعارات مرة واحدة
   // 2) تهيئة WebSocket للإشعارات
-  // useEffect(() => {
-  //   if (!user?.id) return;
-
-  //   // تحميل الإشعارات من الـ API (أول مرة فقط)
-  //   fetchNotiOnce();
-
-  //   // تهيئة Socket.io والإنضمام لغرفة user:{id}
-  //   initNotiSocket(user.id);
-  // }, [user?.id, fetchNotiOnce]);
-
+ 
   useEffect(() => {
     if (!user?.id) return;
 
@@ -153,7 +144,7 @@ export default function AppLayout() {
             {/* زر طي/فتح السايدبار للديسكتوب */}
             <button
               onClick={() => setCollapsed((c) => !c)}
-              className="hidden md:inline-flex rounded-xl border px-2 py-2 hover:bg-gray-50 dark:hover:bg白/10 dark:border-white/20"
+              className="hidden md:inline-flex rounded-xl border px-2 py-2 hover:bg-gray-50 dark:hover:bg-white/10 dark:border-white/20"
               aria-label="طي/فتح القائمة"
             >
               <ChevronLeft
@@ -207,7 +198,7 @@ export default function AppLayout() {
                   <NavItem to="/reports/sla">تقارير SLA</NavItem>
                 )}
                 {has("admin.rbac") && (
-                  <NavItem to="notifications">مركز الإشعارات</NavItem>
+                  <NavItem to="/notifications">مركز الإشعارات</NavItem>
                 )}
               </nav>
             )}
