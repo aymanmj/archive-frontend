@@ -1,15 +1,35 @@
 // src/components/Bell.tsx
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useNotiStore } from "../stores/notiStore";
+import { useAuthStore } from "../stores/authStore";
 
 export default function Bell() {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
 
-  const { items, unread, loading, markAllAsRead, markOneAsRead } =
-    useNotiStore();
+  const user = useAuthStore((s) => s.user);
+
+  const {
+    items,
+    unread,
+    loading,
+    markAllAsRead,
+    markOneAsRead,
+    fetchOnce,
+    connectSocket,
+  } = useNotiStore();
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    // تحميل الإشعارات من الـ API
+    fetchOnce();
+
+    // فتح اتصال WebSocket
+    connectSocket(user.id);
+  }, [user?.id, fetchOnce, connectSocket]);
 
   const handleToggle = () => {
     setOpen((o) => !o);
@@ -34,7 +54,6 @@ export default function Bell() {
 
   return (
     <div className="relative">
-      {/* زر الجرس */}
       <button
         type="button"
         onClick={handleToggle}
@@ -48,7 +67,6 @@ export default function Bell() {
         )}
       </button>
 
-      {/* القائمة المنسدلة */}
       {open && (
         <div className="absolute left-1/2 -translate-x-1/2 mt-2 w-80 max-h-96 overflow-y-auto bg-white dark:bg-slate-900 border border-gray-200 dark:border-white/10 rounded-xl shadow-lg z-40">
           <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 dark:border-white/10 text-sm font-semibold">
@@ -106,21 +124,20 @@ export default function Bell() {
               </button>
             ))}
 
-            {/* 👇 هذا البلوك جديد أسفل القائمة */}
-            {!loading && items.length > 0 && (
-              <div className="px-3 py-2 text-[11px] text-right bg-gray-50 dark:bg-slate-800/60">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    navigate("/notifications");
-                  }}
-                  className="text-blue-600 hover:underline"
-                >
-                  عرض كل الإشعارات
-                </button>
-              </div>
-            )}
+          {!loading && items.length > 0 && (
+            <div className="px-3 py-2 text-[11px] text-right bg-gray-50 dark:bg-slate-800/60">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  navigate("/notifications");
+                }}
+                className="text-blue-600 hover:underline"
+              >
+                عرض كل الإشعارات
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -133,42 +150,42 @@ export default function Bell() {
 
 // // src/components/Bell.tsx
 
-// import { useState } from "react";
+// import { useEffect, useState } from "react";
 // import { useNavigate } from "react-router-dom";
 // import { useNotiStore } from "../stores/notiStore";
-
-// export type NotificationDto = {
-//   id: number;
-//   userId: number;
-//   title: string;
-//   body: string;
-//   link?: string | null;
-//   severity: "info" | "warning" | "danger";
-//   status: "Unread" | "Read";
-//   createdAt: string;
-// };
+// import { useAuthStore } from "../stores/authStore";
 
 // export default function Bell() {
 //   const [open, setOpen] = useState(false);
-
 //   const navigate = useNavigate();
 
+//   // 🧑‍💼 المستخدم الحالي (من authStore)
+//   const user = useAuthStore((s) => s.user);
+
+//   // 🛎️ حالة الإشعارات + الدوال
 //   const {
 //     items,
 //     unread,
 //     loading,
-//     fetchOnce,
 //     markAllAsRead,
 //     markOneAsRead,
+//     fetchOnce,
+//     connectSocket,
 //   } = useNotiStore();
 
-//   const handleToggle = async () => {
-//     const next = !open;
-//     setOpen(next);
-//     if (next) {
-//       // 👈 إجبار إعادة تحميل الإشعارات في كل مرة نفتح القائمة
-//       await fetchOnce(true);
-//     }
+//   // ✅ عند وجود مستخدم: حمّل الإشعارات مرة واحدة + افتح socket
+//   useEffect(() => {
+//     if (!user?.id) return;
+
+//     // تحميل الإشعارات من الـ API (مرة واحدة)
+//     fetchOnce();
+
+//     // فتح اتصال WebSocket وربط المستخدم بغرفته user:{id}
+//     connectSocket(user.id);
+//   }, [user?.id, fetchOnce, connectSocket]);
+
+//   const handleToggle = () => {
+//     setOpen((o) => !o);
 //   };
 
 //   const handleMarkAllReadClick = async () => {
@@ -261,11 +278,24 @@ export default function Bell() {
 //                 </div>
 //               </button>
 //             ))}
+
+//           {/* 👇 زر "عرض كل الإشعارات" أسفل القائمة */}
+//           {!loading && items.length > 0 && (
+//             <div className="px-3 py-2 text-[11px] text-right bg-gray-50 dark:bg-slate-800/60">
+//               <button
+//                 type="button"
+//                 onClick={() => {
+//                   setOpen(false);
+//                   navigate("/notifications");
+//                 }}
+//                 className="text-blue-600 hover:underline"
+//               >
+//                 عرض كل الإشعارات
+//               </button>
+//             </div>
+//           )}
 //         </div>
 //       )}
 //     </div>
 //   );
 // }
-
-
-

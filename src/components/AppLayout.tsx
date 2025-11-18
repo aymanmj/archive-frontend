@@ -17,6 +17,7 @@ import Bell from "./Bell";
 
 // ✅ إشعارات (store + socket)
 import { useNotiStore } from "../stores/notiStore";
+
 // import { initNotiSocket } from "../realtime/notiSocket";
 
 function NavItem({
@@ -103,16 +104,13 @@ export default function AppLayout() {
   // 2) تهيئة WebSocket للإشعارات
  
   useEffect(() => {
-    if (!user?.id) return;
+  if (!user?.id) return;
 
-    // تحميل الإشعارات الموجودة مسبقًا (حتى يظهر العداد فورًا)
-    fetchNotiOnce();
-
-    // تشغيل WebSocket لاستقبال الإشعارات الجديدة
-    connectNotiSocket(user.id);
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  fetchNotiOnce();
+  connectNotiSocket(user.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [user?.id]);
+  
 
   return (
     <div
